@@ -83,6 +83,23 @@ fi
 pull_image "$MEMORY_HUB_IMAGE"
 rm_container_if_exists "$CONTAINER"
 
+# Read-ACL: mount the rebuilt knowledge dist (per-resource content ACL) + source its config, if present.
+# Keeps the security fix durable across a start-script re-run. Absent = falls back to the stock image
+# (ACL disabled), so this is safe on installs that never staged the patch.
+HUB_ACL_DIST="${HUB_ACL_DIST:-/opt/prometheus/data/tdai/patches/knowledge-dist}"
+HUB_ACL_ENV="${HUB_ACL_ENV:-/opt/prometheus/data/tdai/patches/hub-acl.env}"
+ACL_MOUNT=""; ACL_ENVARGS=()
+if [ -f "$HUB_ACL_DIST/server.mjs" ]; then
+  ACL_MOUNT="-v ${HUB_ACL_DIST}:/app/knowledge/dist:ro"
+  info "mounting read-ACL knowledge dist: $HUB_ACL_DIST"
+fi
+if [ -f "$HUB_ACL_ENV" ]; then
+  # shellcheck disable=SC1090
+  . "$HUB_ACL_ENV"
+  ACL_ENVARGS=(-e "MEMORY_CORE_URL=${MEMORY_CORE_URL:-http://memory-core:8420}" -e "MEMORY_CORE_KEY=${MEMORY_CORE_KEY:-}" -e "KNOWLEDGE_AUTH_TOKEN=${KNOWLEDGE_AUTH_TOKEN:-}")
+  info "read-ACL env sourced from $HUB_ACL_ENV"
+fi
+
 # 内部 knowledge 通过 upstream memory 调 LLM 走 custom 模式，直接指向 MEMORY_LLM_*
 # LLM_MODE=custom → 不走 memory 的 LLM proxy，而是 knowledge 直连用户提供的端点
 info "启动 memory-hub (image=$MEMORY_HUB_IMAGE, panel=$PANEL_PORT knowledge=$KNOWLEDGE_PORT)"
@@ -90,9 +107,12 @@ $DOCKER run -d --name "$CONTAINER" \
   --network "$NETWORK" \
   --network-alias memory-hub \
   --add-host=host.docker.internal:host-gateway \
-  -p "${PANEL_PORT}:8125" \
-  -p "${KNOWLEDGE_PORT}:8424" \
+  --restart unless-stopped \
+  -p "172.17.0.1:${PANEL_PORT}:8125" \
+  -p "172.17.0.1:${KNOWLEDGE_PORT}:8424" \
   -v "${PANEL_VOLUME}:/data/knowledge" \
+  ${ACL_MOUNT} \
+  ${ACL_ENVARGS[@]+"${ACL_ENVARGS[@]}"} \
   -e PANEL_PORT=8125 \
   -e KNOWLEDGE_PORT=8424 \
   -e KNOWLEDGE_PUBLIC_BASE_URL="$KNOWLEDGE_PUBLIC_BASE_URL" \

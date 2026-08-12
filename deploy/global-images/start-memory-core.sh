@@ -121,13 +121,20 @@ skill:
     maxResourceSizeBytes: 5000000
 YAML
 
+# Optional read-ACL router patch (mounts over the baked v3-meta-router.ts). Defaults to the staged
+# patch if it exists; clears the var when absent so the -v is skipped cleanly.
+MEMORY_CORE_ROUTER_PATCH="${MEMORY_CORE_ROUTER_PATCH:-/opt/prometheus/data/tdai/patches/v3-meta-router.ts}"
+[ -f "$MEMORY_CORE_ROUTER_PATCH" ] || MEMORY_CORE_ROUTER_PATCH=""
+[ -n "$MEMORY_CORE_ROUTER_PATCH" ] && info "mounting read-ACL router patch: $MEMORY_CORE_ROUTER_PATCH"
+
 info "启动 memory-core (image=$MEMORY_CORE_IMAGE, port=$MEMORY_CORE_PORT)"
 $DOCKER run -d --name "$CONTAINER" \
   --network "$NETWORK" \
   --network-alias memory-core \
-  -p "${MEMORY_CORE_PORT}:8420" \
+  -p "172.17.0.1:${MEMORY_CORE_PORT}:8420" \
   -v "${MEMORY_CORE_VOLUME}:/data/tdai-memory" \
   -v "$CORE_CONFIG_FILE:/data/config/tdai-gateway.yaml:ro" \
+  ${MEMORY_CORE_ROUTER_PATCH:+-v "${MEMORY_CORE_ROUTER_PATCH}:/app/src/metadata/router/v3-meta-router.ts:ro"} \
   -e TDAI_GATEWAY_PORT=8420 \
   -e TDAI_GATEWAY_HOST=0.0.0.0 \
   -e TDAI_GATEWAY_API_KEY="$MEMORY_CORE_GATEWAY_API_KEY" \

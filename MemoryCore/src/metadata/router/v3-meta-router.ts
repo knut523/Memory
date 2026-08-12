@@ -236,15 +236,28 @@ const routeTable: Record<string, Handler> = {
 
   // Asset
   [`${V3_PREFIX}/asset/create`]: bind(S.assetCreateSchema, (d, c, s) => s.createAssetForCaller(d, c)),
-  [`${V3_PREFIX}/asset/get`]: bind(S.assetGetSchema, async (d, _c, s) => orNotFound(await s.getAssetById(d.asset_id), "asset_not_found", d.asset_id)),
+  // Read-ACL: mirror the write-side ownership gate onto reads. Only owner / active team member
+  // (subject to visibility) may fetch an asset — previously any authenticated caller (even one in
+  // no team) could read any asset by id. Reuses the existing checkAssetPermission decision tree.
+  [`${V3_PREFIX}/asset/get`]: bind(S.assetGetSchema, async (d, c, s) => {
+    if (!c.userId) throw new MetadataError("permission_denied", "authentication required");
+    const asset = orNotFound(await s.getAssetById(d.asset_id), "asset_not_found", d.asset_id);
+    const perm = await s.checkAssetPermission({ user_id: c.userId, asset_id: d.asset_id, action: "read" });
+    if (!perm.allowed) throw new MetadataError("permission_denied", `not permitted to read asset: ${perm.reason}`);
+    return asset;
+  }),
   [`${V3_PREFIX}/asset/update`]: bind(S.assetUpdateSchema, (d, c, s) => {
     const { asset_id, ...patch } = d;
     return s.updateAssetForCaller(asset_id, patch, c);
   }),
   [`${V3_PREFIX}/asset/delete`]: bind(S.assetDeleteSchema, (d, c, s) => s.deleteAssetsForCaller(d.asset_ids, c)),
-  [`${V3_PREFIX}/asset/list`]: bind(S.assetListSchema, (d, _c, s) => {
-    const { team_id, limit, offset, ...filter } = d;
-    return s.listAssetsByTeam(team_id, resolvePagination({ limit, offset }), filter);
+  // Read-ACL: list only assets the caller may actually read. Requires active membership of team_id
+  // and filters per-asset through checkAssetPermission (same path as list-accessible) — previously
+  // any caller could enumerate every asset of any team just by passing its team_id.
+  [`${V3_PREFIX}/asset/list`]: bind(S.assetListSchema, (d, c, s) => {
+    if (!c.userId) throw new MetadataError("permission_denied", "authentication required");
+    const { team_id, asset_type, visibility, limit, offset } = d;
+    return s.listAccessibleAssets({ user_id: c.userId, team_id, asset_type, visibility, limit, offset, action: "read" });
   }),
   [`${V3_PREFIX}/asset/list-accessible`]: bind(S.assetListAccessibleSchema, (d, _c, s) =>
     s.listAccessibleAssets(d)),
