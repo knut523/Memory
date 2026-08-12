@@ -27,6 +27,7 @@ import {
   type BatchDeleteResult,
 } from "../api-helpers.js";
 import type { CodeGraphInstancePool } from "../module.js";
+import { enforceReadAcl } from "../read-acl.js";
 
 export interface CodeGraphRouteDeps {
   cgService: CodeGraphService;
@@ -327,6 +328,11 @@ export function createCodeGraphRoutes(deps: CodeGraphRouteDeps): Hono {
       if (!isValidIdSegment(serviceId)) return c.json(wrapError(400, "x-tdai-service-id header is required"), 400);
       const cgId = body.code_graph_id;
       if (!isValidIdSegment(cgId)) return c.json(wrapError(400, "code_graph_id is required"), 400);
+
+      // Read-ACL: delegate to memory-core's checkPermission. includeCode (full source) is a stricter,
+      // owner/grant-only read — deny it to plain team members. Runs before existence is revealed.
+      const denied = await enforceReadAcl(c, String(cgId), { requireOwner: body.includeCode === true });
+      if (denied) return denied;
 
       const row = cgService.getById(serviceId, cgId);
       if (!row) return c.json(wrapError(404, "code graph not found"), 404);

@@ -19,6 +19,7 @@ import type { WikiSourceManager } from "../engines/wiki/index.js";
 import { executeTool as executeCodeTool } from "../engines/code/index.js";
 import { wrapOk, wrapError, isValidIdSegment } from "../api-helpers.js";
 import { isWikiId, isCodeGraphId } from "../store/ids.js";
+import { enforceReadAcl } from "../read-acl.js";
 
 export interface ToolsRouteDeps {
   wikiService: WikiService;
@@ -271,6 +272,9 @@ export function createToolsRoutes(deps: ToolsRouteDeps): Hono {
         return c.json(wrapError(403, `unknown tool: '${toolName}' for wiki resource '${knowledgeId}'. Use tools/list to discover available tools.`), 403);
       }
 
+      const wdenied = await enforceReadAcl(c, knowledgeId);
+      if (wdenied) return wdenied;
+
       const row = wikiService.getById(serviceId, knowledgeId);
       if (!row) return c.json(wrapError(404, "wiki not found"), 404);
 
@@ -282,6 +286,9 @@ export function createToolsRoutes(deps: ToolsRouteDeps): Hono {
       if (!CODE_GRAPH_TOOL_NAMES.has(toolName)) {
         return c.json(wrapError(403, `unknown tool: '${toolName}' for code-graph resource '${knowledgeId}'. Use tools/list to discover available tools.`), 403);
       }
+
+      const cdenied = await enforceReadAcl(c, knowledgeId, { requireOwner: toolParams.includeCode === true });
+      if (cdenied) return cdenied;
 
       const row = cgService.getById(serviceId, knowledgeId);
       if (!row) return c.json(wrapError(404, "code graph not found"), 404);
