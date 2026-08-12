@@ -2011,6 +2011,30 @@ function PagesTabContent({
   const { t } = useTranslation();
   const { width: leftW, onMouseDown } = useResizable(260, 180, 400, 'left');
 
+  // Fold the flat page list into a FOLDER TREE by each page's path directory — so users see
+  // intentional structure, not a flat dump. Root-level pages render ungrouped at the top; every
+  // sub-folder is a collapsible group.
+  const folders = useMemo(() => {
+    const map = new Map<string, WikiPage[]>();
+    for (const p of pages) {
+      const raw = (p.path || '').replace(/\\/g, '/');
+      const slash = raw.lastIndexOf('/');
+      const folder = slash > 0 ? raw.slice(0, slash) : '';
+      const arr = map.get(folder);
+      if (arr) arr.push(p);
+      else map.set(folder, [p]);
+    }
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [pages]);
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const toggleFolder = (f: string) =>
+    setCollapsedFolders((s) => {
+      const n = new Set(s);
+      if (n.has(f)) n.delete(f);
+      else n.add(f);
+      return n;
+    });
+
   return (
     <div
       className="_wiki-detail-split"
@@ -2039,30 +2063,56 @@ function PagesTabContent({
           ))}
         </div>
         <div className="_wiki-detail-page-list">
-          {pages.map((page) => {
-            const active =
-              selectedPage &&
-              ((selectedPage as any).id || selectedPage.path) === ((page as any).id || page.path);
+          {folders.map(([folder, folderPages]) => {
+            const isRoot = folder === '';
+            const isCollapsed = collapsedFolders.has(folder);
             return (
-              <div
-                key={(page as any).id || page.path}
-                className={`_wiki-detail-page-row${active ? ' is-active' : ''}`}
-              >
-                <button className="_wiki-detail-page-item" onClick={() => onReadPage(page)}>
-                  <span
-                    className="_wiki-detail-type-dot"
-                    style={{ background: TYPE_COLORS[page.type] || TYPE_COLOR_FALLBACK }}
-                  />
-                  <span className="_wiki-detail-page-item-title">{page.title}</span>
-                </button>
-                <Button
-                  type="text"
-                  className="_wiki-detail-page-delete"
-                  onClick={() => onDeletePage(page)}
-                  tooltip={t('wiki.detail.pages.deletePage')}
-                >
-                  {t('wiki.detail.pages.delete')}
-                </Button>
+              <div key={folder || '(root)'} className="_wiki-detail-folder">
+                {!isRoot && (
+                  <button
+                    className="_wiki-detail-folder-header"
+                    onClick={() => toggleFolder(folder)}
+                    title={folder}
+                  >
+                    <span className="_wiki-detail-folder-caret">{isCollapsed ? '▸' : '▾'}</span>
+                    <span className="_wiki-detail-folder-name">{folder}</span>
+                    <span className="_wiki-detail-folder-count">{folderPages.length}</span>
+                  </button>
+                )}
+                {(isRoot || !isCollapsed) &&
+                  folderPages.map((page) => {
+                    const active =
+                      selectedPage &&
+                      ((selectedPage as any).id || selectedPage.path) ===
+                        ((page as any).id || page.path);
+                    return (
+                      <div
+                        key={(page as any).id || page.path}
+                        className={`_wiki-detail-page-row${active ? ' is-active' : ''}${
+                          isRoot ? '' : ' _wiki-detail-page-row-nested'
+                        }`}
+                      >
+                        <button
+                          className="_wiki-detail-page-item"
+                          onClick={() => onReadPage(page)}
+                        >
+                          <span
+                            className="_wiki-detail-type-dot"
+                            style={{ background: TYPE_COLORS[page.type] || TYPE_COLOR_FALLBACK }}
+                          />
+                          <span className="_wiki-detail-page-item-title">{page.title}</span>
+                        </button>
+                        <Button
+                          type="text"
+                          className="_wiki-detail-page-delete"
+                          onClick={() => onDeletePage(page)}
+                          tooltip={t('wiki.detail.pages.deletePage')}
+                        >
+                          {t('wiki.detail.pages.delete')}
+                        </Button>
+                      </div>
+                    );
+                  })}
               </div>
             );
           })}

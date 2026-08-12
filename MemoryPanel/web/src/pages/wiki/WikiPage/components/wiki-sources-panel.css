@@ -852,3 +852,16 @@
     justify-content: flex-start;
   }
 }
+
+/* Folder-tree layout for the pages section (group by path directory; collapsible sub-folders). */
+._wiki-detail-folder { margin-bottom: 2px; }
+._wiki-detail-folder-header {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 4px 8px; background: none; border: 0; cursor: pointer;
+  font-size: 12px; color: var(--tea-text-secondary, #8b93a7); text-align: left;
+}
+._wiki-detail-folder-header:hover { background: rgba(0, 0, 0, 0.04); }
+._wiki-detail-folder-caret { width: 12px; flex: none; }
+._wiki-detail-folder-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+._wiki-detail-folder-count { flex: none; opacity: 0.65; font-variant-numeric: tabular-nums; }
+._wiki-detail-page-row-nested { padding-left: 16px; }
