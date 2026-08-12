@@ -24,7 +24,8 @@ export type PageId =
   | 'chat_memory'
   | 'team_members'
   | 'team_agents'
-  | 'api_keys';
+  | 'api_keys'
+  | 'admin';
 
 /** 页面元数据 */
 export interface PageMeta {
@@ -51,11 +52,12 @@ export function usePageMeta(): Record<PageId, PageMeta> {
     team_members:    { id: 'team_members',    label: t('menu.team_members'), desc: t('menu.desc.team_members'), group: t('menu.group.organization'), order: 0 },
     team_agents:     { id: 'team_agents',     label: t('menu.team_agents'), desc: t('menu.desc.team_agents'), group: t('menu.group.organization'), order: 1 },
     api_keys:        { id: 'api_keys',        label: t('menu.api_keys'), desc: t('menu.desc.api_keys'), group: t('menu.group.organization'), order: 2 },
+    admin:           { id: 'admin',           label: t('menu.admin'), desc: t('menu.desc.admin'), group: t('menu.group.admin'), order: 0 },
   };
 }
 
 /** 分组排序顺序 */
-export const GROUP_ORDER_KEYS = ['workbench', 'organization', 'assets'] as const;
+export const GROUP_ORDER_KEYS = ['workbench', 'organization', 'assets', 'admin'] as const;
 
 /** 每个页面在侧边栏菜单中的图标（Tea 官方图标，size 16） */
 export const ITEM_ICON: Record<PageId, JSX.Element> = {
@@ -67,6 +69,7 @@ export const ITEM_ICON: Record<PageId, JSX.Element> = {
   code: <CodeIcon size={16} />,
   skills: <ToolsIcon size={16} />,
   chat_memory: <ChatIcon size={16} />,
+  admin: <LockOnIcon size={16} />,
 };
 
 /** 分组图标（工作台 / 组织与权限 / 资产管理） */

@@ -1,0 +1,125 @@
+/* AdminPage — folded-in admin console (pairings / ledger / integrity / gaps). */
+
+._admin-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 2px 32px;
+}
+
+._admin-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+._admin-head h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  color: var(--tea-color-text-primary);
+}
+
+._admin-sub,
+._admin-section-sub {
+  margin: 0 0 8px;
+  color: var(--tea-color-text-secondary);
+  font-size: 13px;
+}
+
+._admin-error {
+  padding: 10px 12px;
+  border: 1px solid var(--tea-color-border-secondary-default);
+  border-left: 3px solid var(--tea-color-text-error-default);
+  border-radius: 4px;
+  color: var(--tea-color-text-error-default);
+  background: var(--tea-color-bg-secondary-default);
+  font-size: 13px;
+}
+
+._admin-empty {
+  padding: 16px 4px;
+  color: var(--tea-color-text-tertiary);
+  font-size: 13px;
+}
+
+._admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+._admin-table th,
+._admin-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--tea-color-border-secondary-default);
+  vertical-align: top;
+}
+
+._admin-table th {
+  color: var(--tea-color-text-secondary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+._admin-right {
+  text-align: right;
+  white-space: nowrap;
+}
+
+._admin-nowrap {
+  white-space: nowrap;
+}
+
+._mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--tea-color-text-primary);
+}
+
+._admin-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--tea-color-bg-secondary-default);
+  color: var(--tea-color-text-tertiary);
+  font-size: 11px;
+}
+
+._admin-verify {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+._admin-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+._admin-badge.ok {
+  color: var(--tea-color-text-success-default);
+  border: 1px solid var(--tea-color-border-success-default);
+}
+
+._admin-badge.bad {
+  color: var(--tea-color-text-error-default);
+  border: 1px solid var(--tea-color-text-error-default);
+}
+
+._admin-verify-meta {
+  color: var(--tea-color-text-secondary);
+  font-size: 13px;
+}
+
+._admin-tip {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--tea-color-text-tertiary);
+}

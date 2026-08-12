@@ -26,6 +26,7 @@ const PATH_TO_PAGE: Record<string, PageId> = {
   '/team/members': 'team_members',
   '/team/agents': 'team_agents',
   '/team/api-keys': 'api_keys',
+  '/admin': 'admin',
 };
 
 /** PageId → 路由 path */
@@ -106,6 +107,9 @@ export function ConsoleLayout() {
 
     for (const meta of Object.values(PAGE_META)) {
       if (userRole === 'reviewer' && meta.id === 'team_members') continue;
+      // Admin console is global-admin only. This only hides the nav item; the panel backend still
+      // gates every /api/v1/admin/* route server-side on user_type=system_admin (see admin.ts).
+      if (meta.id === 'admin' && userRole !== 'admin') continue;
       const list = byGroup.get(meta.group) ?? [];
       list.push(meta);
       byGroup.set(meta.group, list);
