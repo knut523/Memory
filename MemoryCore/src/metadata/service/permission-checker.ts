@@ -81,8 +81,16 @@ export function checkPermission(ctx: PermCheckContext): PermCheckResult {
     return { allowed: true, reason: "owner" };
   }
 
-  // 3. 非 team 成员
+  // 3. Non-member (P3): allowed ONLY by a direct, active grant to THIS asset. matchesCaller(acl, null)
+  //    passes role=null, so the team_role branch is a dead path and no role default can apply — a
+  //    non-member gets exactly the {user|agent|team} grants that name them, never inherited team
+  //    privileges. Short-circuits: does not fall through the membership-assuming ladder below.
   if (!membership || membership.status !== "active") {
+    const matched = aclRecords.find((acl) => matchesCaller(acl, null));
+    if (matched) {
+      logger.debug(`[META] perm_check ALLOW: non-member direct grant id=${matched.id}`);
+      return { allowed: true, reason: `acl:${matched.id}` };
+    }
     logger.debug(`[META] perm_check DENY: not team member`);
     return { allowed: false, reason: "not_team_member" };
   }

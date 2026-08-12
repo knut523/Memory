@@ -1374,8 +1374,13 @@ export class MetadataService {
     // roleDefaultCovers short-circuit below would also wrongly skip the ACL load for a member+read.
     // So for restricted assets we must ALWAYS load the real ACL and re-check; otherwise an owner's
     // explicit grant is never consulted and cross-member sharing silently never works.
-    const restrictedNeedsAcl = asset.visibility === "restricted";
-    if (!restrictedNeedsAcl) {
+    // P3 (2026-08-12): a NON-member (fast.reason==="not_team_member") may still hold a direct grant
+    // (user/agent/team subject) to this asset — same bug class as the restricted fix above: the fast
+    // path runs with aclRecords:[] and hard-denies before the grant is ever read. Both cases must load
+    // the real ACL and re-check. (The checker's step-3 rework consults ONLY direct grants for a
+    // non-member — never team_role/role-defaults — so this cannot leak team privileges.)
+    const mustLoadAcl = asset.visibility === "restricted" || fast.reason === "not_team_member";
+    if (!mustLoadAcl) {
       // 只有「通过了前置门但角色默认未覆盖」(no_permission) 才需懒加载 ACL 重判
       if (fast.reason !== "no_permission") return fast;
       if (membership && roleDefaultCovers(membership.role, action)) return fast;
