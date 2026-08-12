@@ -43,7 +43,11 @@ export type Permission =
   | "use";
 
 /** ACL 授权主体类型。 */
-export type AclSubjectType = "user" | "team_role" | "agent";
+// "team" (P2) lets a grant target an entire team for cross-team sharing. The write-path zod schema
+// (v3-meta-schemas aclSubjectType) still restricts creation to user/team_role/agent, so no "team" row
+// can be minted until P5 opens it — the checker branch stays dormant. Widening is safe: nothing
+// switches exhaustively on this union.
+export type AclSubjectType = "user" | "team_role" | "agent" | "team";
 
 /** ACL 效果（一期仅 allow，deny 预留）。 */
 export type AclEffect = "allow" | "deny";
@@ -282,6 +286,11 @@ export interface AclEntity {
   granted_by: string;
   created_at: string;
   updated_at: string;
+  /** P0 sharing foundation (nullable, from the meta_asset_acl migration): optional ISO expiry the
+   *  permission checker honors; optional scope narrowing (e.g. memory rooms) for scoped shares.
+   *  NULL = never expires / unscoped — so existing grants are unaffected. */
+  expires_at?: string | null;
+  scope_json?: string | null;
 }
 
 // ============================
@@ -428,6 +437,10 @@ export interface GrantAclInput {
   permission: Permission;
   effect?: AclEffect;
   granted_by: string;
+  /** P1: optional ISO expiry — after this the checker (aclActive) stops matching the grant. */
+  expires_at?: string | null;
+  /** P0/scoped-share: optional JSON narrowing (e.g. memory rooms). Persisted; enforcement is later. */
+  scope_json?: string | null;
 }
 
 // ============================

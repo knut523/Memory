@@ -1368,9 +1368,18 @@ export class MetadataService {
     });
     if (fast.allowed) return fast;
 
-    // 只有「通过了前置门但角色默认未覆盖」(no_permission) 才需懒加载 ACL 重判
-    if (fast.reason !== "no_permission") return fast;
-    if (membership && roleDefaultCovers(membership.role, action)) return fast;
+    // BUGFIX (dogfood 2026-08-12): a `restricted` asset grants ONLY via explicit ACL — role defaults
+    // never apply to it (see permission-checker restricted case). The fast path runs with aclRecords:[]
+    // and therefore always denies restricted access with reason "visibility_restricted", and the
+    // roleDefaultCovers short-circuit below would also wrongly skip the ACL load for a member+read.
+    // So for restricted assets we must ALWAYS load the real ACL and re-check; otherwise an owner's
+    // explicit grant is never consulted and cross-member sharing silently never works.
+    const restrictedNeedsAcl = asset.visibility === "restricted";
+    if (!restrictedNeedsAcl) {
+      // 只有「通过了前置门但角色默认未覆盖」(no_permission) 才需懒加载 ACL 重判
+      if (fast.reason !== "no_permission") return fast;
+      if (membership && roleDefaultCovers(membership.role, action)) return fast;
+    }
 
     const aclRecords = await this.allAclRecords(params.asset_id);
     return checkPermission({

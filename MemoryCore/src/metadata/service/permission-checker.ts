@@ -27,6 +27,12 @@ export interface PermCheckContext {
   aclRecords: AclEntity[];
   /** 可选，当 action='use' 且调用方是 agent 时传入。 */
   agentId?: string;
+  /** P1: current time (ISO) for expiry evaluation. Defaults to now if omitted — passing it keeps the
+   *  function pure/testable. An ACL row whose expires_at is in the past no longer matches. */
+  now?: string;
+  /** P2: the caller's active team ids, for matching subject_type='team' grants (cross-team share).
+   *  Defaults to [] — until the caller wires this, 'team' grants stay dormant. */
+  callerTeamIds?: string[];
   logger?: PermCheckLogger;
 }
 
@@ -40,9 +46,28 @@ const MEMBER_ACTIONS: Permission[] = ["read"];
 
 const noopLogger: PermCheckLogger = { debug: () => {} };
 
+/** P1: an allow-grant is active only if it has no expiry or the expiry is still in the future. */
+function aclActive(acl: AclEntity, now: string): boolean {
+  return acl.effect === "allow" && (!acl.expires_at || acl.expires_at > now);
+}
+
 export function checkPermission(ctx: PermCheckContext): PermCheckResult {
   const { user, asset, membership, action, aclRecords, agentId } = ctx;
   const logger = ctx.logger ?? noopLogger;
+  const now = ctx.now ?? new Date().toISOString();
+  const callerTeamIds = ctx.callerTeamIds ?? [];
+
+  // A single active-and-matches-caller predicate, reused at both ACL-match sites so the expiry (P1)
+  // and 'team' subject (P2) rules can never diverge between them. team_role is only meaningful when
+  // the caller has a role in the asset's team (membership present) — the cross-team fall-through path
+  // must pass membership=null so it can never inherit a role it doesn't hold.
+  const matchesCaller = (acl: AclEntity, role: TeamMemberEntity["role"] | null): boolean =>
+    aclActive(acl, now) &&
+    acl.permission === action &&
+    ((acl.subject_type === "user" && acl.subject_id === user.user_id) ||
+      (acl.subject_type === "team_role" && role !== null && acl.subject_id === role) ||
+      (acl.subject_type === "agent" && !!agentId && acl.subject_id === agentId) ||
+      (acl.subject_type === "team" && callerTeamIds.includes(acl.subject_id)));
 
   // 1. 资源不存在/归档
   if (!asset || asset.status === "archived") {
@@ -83,14 +108,7 @@ export function checkPermission(ctx: PermCheckContext): PermCheckResult {
     case "restricted":
       if (membership.role !== "admin") {
         // Non-admin: skip role defaults, only explicit ACL can grant access
-        const matched = aclRecords.find(
-          (acl) =>
-            acl.permission === action &&
-            acl.effect === "allow" &&
-            ((acl.subject_type === "user" && acl.subject_id === user.user_id) ||
-              (acl.subject_type === "team_role" && acl.subject_id === membership.role) ||
-              (acl.subject_type === "agent" && !!agentId && acl.subject_id === agentId)),
-        );
+        const matched = aclRecords.find((acl) => matchesCaller(acl, membership.role));
         if (matched) {
           logger.debug(`[META] perm_check ALLOW: restricted + acl id=${matched.id}`);
           return { allowed: true, reason: `acl:${matched.id}` };
@@ -120,15 +138,8 @@ export function checkPermission(ctx: PermCheckContext): PermCheckResult {
     return { allowed: true, reason: `role_default:${membership.role}` };
   }
 
-  // 6. 显式 ACL（user / team_role / agent 三种主体）
-  const matched = aclRecords.find(
-    (acl) =>
-      acl.permission === action &&
-      acl.effect === "allow" &&
-      ((acl.subject_type === "user" && acl.subject_id === user.user_id) ||
-        (acl.subject_type === "team_role" && acl.subject_id === membership.role) ||
-        (acl.subject_type === "agent" && !!agentId && acl.subject_id === agentId)),
-  );
+  // 6. 显式 ACL（user / team_role / agent / team 四种主体，含 P1 过期判定）
+  const matched = aclRecords.find((acl) => matchesCaller(acl, membership.role));
   if (matched) {
     logger.debug(`[META] perm_check ALLOW: acl id=${matched.id}`);
     return { allowed: true, reason: `acl:${matched.id}` };

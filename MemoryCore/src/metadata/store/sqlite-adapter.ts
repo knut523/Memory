@@ -263,6 +263,12 @@ export class SqliteMetadataStore implements IMetadataStore {
         granted_by TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
+        -- P0 sharing foundation (additive, nullable → no behavior change):
+        -- scope_json narrows a grant (e.g. memory rooms) for scoped shares; expires_at is an
+        -- optional ISO expiry the permission-checker honors. subject_type already stores 'team'
+        -- (TEXT, no CHECK) so cross-team grants need no DB change.
+        scope_json TEXT,
+        expires_at TEXT,
         UNIQUE(asset_id, subject_type, subject_id, permission)
       );
       CREATE INDEX IF NOT EXISTS idx_meta_users_created ON meta_users(created_at DESC);
@@ -305,6 +311,29 @@ export class SqliteMetadataStore implements IMetadataStore {
     `);
     this.migrateUserTypeColumn();
     this.migrateLegacyUserKeys();
+    this.migrateAclScopeColumns();
+  }
+
+  /**
+   * P0 sharing foundation for existing DBs: add the nullable scope_json + expires_at columns to
+   * meta_asset_acl. Purely additive — no existing grant changes meaning (both default NULL), so this
+   * is a no-behavior-change migration; the read-path enforcement that consumes them ships separately.
+   */
+  private migrateAclScopeColumns(): void {
+    const cols = new Set(
+      this.all<{ name: string }>("SELECT name FROM pragma_table_info('meta_asset_acl')").map(
+        (r) => r.name,
+      ),
+    );
+    for (const col of ["scope_json", "expires_at"] as const) {
+      if (!cols.has(col)) {
+        try {
+          this.db.exec(`ALTER TABLE meta_asset_acl ADD COLUMN ${col} TEXT`);
+        } catch {
+          /* column may exist from a concurrent init */
+        }
+      }
+    }
   }
 
   private migrateUserTypeColumn(): void {
@@ -1469,10 +1498,11 @@ export class SqliteMetadataStore implements IMetadataStore {
     runWithGeneratedRelationId(input.id, isSqliteRelationIdCollision, (id) => {
       this.run(
         `INSERT INTO meta_asset_acl
-        (id, asset_id, subject_type, subject_id, permission, effect, granted_by, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?)
+        (id, asset_id, subject_type, subject_id, permission, effect, granted_by, created_at, updated_at, expires_at, scope_json)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(asset_id, subject_type, subject_id, permission)
-       DO UPDATE SET effect = excluded.effect, granted_by = excluded.granted_by, updated_at = excluded.updated_at`,
+       DO UPDATE SET effect = excluded.effect, granted_by = excluded.granted_by, updated_at = excluded.updated_at,
+         expires_at = excluded.expires_at, scope_json = excluded.scope_json`,
         id,
         input.asset_id,
         input.subject_type,
@@ -1482,6 +1512,8 @@ export class SqliteMetadataStore implements IMetadataStore {
         input.granted_by,
         now,
         now,
+        input.expires_at ?? null,
+        input.scope_json ?? null,
       );
     });
     return this.get<AclEntity>(

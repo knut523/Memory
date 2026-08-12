@@ -310,6 +310,9 @@ export const aclGrantSchema = z
     effect: aclEffect.optional(),
     granted_by: nonEmpty.optional(),
     granted_by_key: z.string().min(1).optional(),
+    // P1: optional expiry the checker honors; scope_json for scoped shares (persisted now, enforced later)
+    expires_at: z.string().datetime().nullable().optional(),
+    scope_json: z.string().nullable().optional(),
   })
   .refine((v) => !!v.granted_by || !!v.granted_by_key, {
     message: "granted_by or granted_by_key is required",
