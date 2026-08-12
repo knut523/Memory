@@ -99,6 +99,8 @@ export interface WikiDetail {
   name: string;
   service_url: string | null;
   summary: string | null;
+  /** JSON map of per-folder descriptions: { "<folder path>": { description, updatedAt } }. */
+  folder_meta: string | null;
   status: string;
   internal_status: string | null;
   sync_error: string | null;
@@ -117,6 +119,7 @@ export function toWikiDetail(row: WikiRow): WikiDetail {
     name: row.name,
     service_url: row.service_url ?? null,
     summary: row.summary ?? null,
+    folder_meta: row.folder_meta ?? null,
     status: row.status,
     internal_status: row.internal_status,
     sync_error: row.sync_error,

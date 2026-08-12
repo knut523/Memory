@@ -78,6 +78,10 @@ export const knowledgeWiki = sqliteTable(
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
     deletedAt: text("deleted_at"),
+    // Per-folder descriptions ("give a reason to a folder, not just dump docs"). JSON map keyed by
+    // folder path: { "<relPath dir>": { description, updatedAt } }. Folders themselves stay derived
+    // from page paths; this only annotates them.
+    folderMeta: text("folder_meta"),
   },
   (table) => [
     uniqueIndex("idx_kwiki_team_name")

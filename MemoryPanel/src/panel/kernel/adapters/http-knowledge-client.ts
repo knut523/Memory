@@ -90,6 +90,14 @@ export class HttpKnowledgeClient implements KnowledgeClientPort {
     return this.post('/v3/wiki/get', { wiki_id: wikiId });
   }
 
+  async wikiFolderMetaSet(wikiId: string, folderPath: string, description: string): Promise<WikiDetail> {
+    return this.post('/v3/wiki/folder-meta/set', {
+      wiki_id: wikiId,
+      folder_path: folderPath,
+      description,
+    });
+  }
+
   async wikiIngest(wikiId: string): Promise<WikiIngestResult> {
     return this.post('/v3/wiki/ingest', { wiki_id: wikiId });
   }

@@ -157,6 +157,7 @@ export interface KnowledgeClientPort {
   // Wiki — 资产层（create/list 带 IdFields；get/ingest/delete 仅资产 id 寻址）
   wikiCreate(teamId: string, name: string, userId?: string): Promise<WikiDetail>;
   wikiGet(wikiId: string): Promise<WikiDetail>;
+  wikiFolderMetaSet(wikiId: string, folderPath: string, description: string): Promise<WikiDetail>;
   wikiIngest(wikiId: string): Promise<WikiIngestResult>;
   wikiDelete(wikiIds: string[]): Promise<BatchDeleteResult>;
   wikiList(teamId: string, opts?: { status?: string; limit?: number; offset?: number }): Promise<WikiListResult>;

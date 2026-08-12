@@ -263,6 +263,29 @@ export class WikiService {
   }
 
   /**
+   * Set (or clear) the description of one folder inside a wiki. Folders are derived from page paths;
+   * this only annotates them so users can give a folder a reason instead of just dumping docs. An
+   * empty/null description removes the entry. Returns the updated row, or null if the wiki is missing.
+   */
+  setFolderMeta(serviceId: string, wikiId: string, folderPath: string, description: string | null): WikiRow | null {
+    const row = this.store.getWikiById(serviceId, wikiId);
+    if (!row) return null;
+    let map: Record<string, { description: string; updatedAt: string }> = {};
+    if (row.folder_meta) {
+      try {
+        const parsed = JSON.parse(row.folder_meta) as unknown;
+        if (parsed && typeof parsed === "object") map = parsed as typeof map;
+      } catch {
+        /* corrupt JSON → start fresh rather than fail the write */
+      }
+    }
+    const desc = (description ?? "").trim();
+    if (desc) map[folderPath] = { description: desc, updatedAt: new Date().toISOString() };
+    else delete map[folderPath];
+    return this.store.updateWikiMeta(serviceId, wikiId, { folder_meta: JSON.stringify(map) });
+  }
+
+  /**
    * 显式触发 ingest（LLM 加工 raw → page + 建索引）。
    * 立即返回，后台异步执行。memory/team 不匹配返回 not_found；pending/processing 返回 busy。
    */

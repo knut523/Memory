@@ -436,6 +436,7 @@ export class SqliteKnowledgeStore implements IKnowledgeStore {
     const set: Record<string, unknown> = { updatedAt: nowIso() };
     if (patch.name !== undefined) set.name = patch.name;
     if (patch.summary !== undefined) set.summary = patch.summary;
+    if (patch.folder_meta !== undefined) set.folderMeta = patch.folder_meta;
     this.db
       .update(knowledgeWiki)
       .set(set)
@@ -640,6 +641,7 @@ export class SqliteKnowledgeStore implements IKnowledgeStore {
       page_count: r.pageCount,
       service_url: r.serviceUrl ?? null,
       summary: r.summary ?? null,
+      folder_meta: r.folderMeta ?? null,
       version: r.version,
       last_sync_at: r.lastSyncAt,
       created_at: r.createdAt,

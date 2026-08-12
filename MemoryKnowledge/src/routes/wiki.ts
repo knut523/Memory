@@ -27,6 +27,7 @@ import {
   toWikiDetail,
   type BatchDeleteResult,
 } from "../api-helpers.js";
+import { enforceReadAcl } from "../read-acl.js";
 
 export interface WikiRouteDeps {
   wikiService: WikiService;
@@ -148,6 +149,23 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
     return c.json(wrapOk(toWikiDetail(updated)));
   });
 
+  // Set (or clear) one folder's description. folder_path is a page-path directory (e.g. "runbooks");
+  // description="" or omitted clears it. Folders themselves stay derived from page paths.
+  app.post("/folder-meta/set", async (c) => {
+    const body = await c.req.json<Record<string, unknown>>();
+    const serviceId = c.req.header("x-tdai-service-id");
+    if (!isValidIdSegment(serviceId)) return c.json(wrapError(400, "x-tdai-service-id header is required"), 400);
+    const wikiId = body.wiki_id;
+    if (!isValidIdSegment(wikiId)) return c.json(wrapError(400, "wiki_id is required"), 400);
+    const folderPath = typeof body.folder_path === "string" ? body.folder_path.trim() : "";
+    if (!folderPath) return c.json(wrapError(400, "folder_path is required"), 400);
+    const description = typeof body.description === "string" ? body.description : null;
+
+    const updated = wikiService.setFolderMeta(serviceId, wikiId, folderPath, description);
+    if (!updated) return c.json(wrapError(404, "wiki not found"), 404);
+    return c.json(wrapOk(toWikiDetail(updated)));
+  });
+
   // ── WITH-IdFields (service_id + team_id) ──
 
   app.post("/create", async (c) => {
@@ -228,6 +246,9 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
 
     const wikiId = body.wiki_id;
     if (!isValidIdSegment(wikiId)) return c.json(wrapError(400, "wiki_id is required"), 400);
+
+    const denied = await enforceReadAcl(c, String(wikiId));
+    if (denied) return denied;
 
     const row = wikiService.getById(serviceId, wikiId);
     if (!row) return c.json(wrapError(404, "wiki not found"), 404);
@@ -361,6 +382,9 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
     const wikiId = body.wiki_id;
     if (!isValidIdSegment(wikiId)) return c.json(wrapError(400, "wiki_id is required"), 400);
 
+    const denied = await enforceReadAcl(c, String(wikiId));
+    if (denied) return denied;
+
     const row = wikiService.getById(serviceId, wikiId);
     if (!row) return c.json(wrapError(404, "wiki not found"), 404);
 
@@ -471,6 +495,9 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
 
     const wikiId = body.wiki_id;
     if (!isValidIdSegment(wikiId)) return c.json(wrapError(400, "wiki_id is required"), 400);
+
+    const denied = await enforceReadAcl(c, String(wikiId));
+    if (denied) return denied;
 
     const row = wikiService.getById(serviceId, wikiId);
     if (!row) return c.json(wrapError(404, "wiki not found"), 404);

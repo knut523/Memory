@@ -912,6 +912,31 @@ export default function WikiSourcesPanel() {
     () => (pageTypeFilter === 'all' ? pages : pages.filter((p) => p.type === pageTypeFilter)),
     [pages, pageTypeFilter],
   );
+  // Per-folder descriptions ("reason") for the current wiki, parsed from its folder_meta JSON.
+  const folderMeta = useMemo<Record<string, { description: string }>>(() => {
+    const raw = sources.find((s) => s.wiki_id === selectedWikiId)?.folder_meta;
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }, [sources, selectedWikiId]);
+  const handleSetFolderMeta = useCallback(
+    async (folderPath: string, description: string) => {
+      if (!selectedWikiId) return;
+      try {
+        const updated = await knowledgeApi.wiki.setFolderMeta(selectedWikiId, folderPath, description);
+        setSources((prev) =>
+          prev.map((s) => (s.wiki_id === selectedWikiId ? { ...s, folder_meta: updated.folder_meta } : s)),
+        );
+      } catch {
+        /* non-fatal: the description just won't persist; the tree still works */
+      }
+    },
+    [selectedWikiId],
+  );
   const edgeCount = graphData?.edges?.length || 0;
   const runningWiki = useMemo(
     () => sources.find((s) => s.status === 'pending' || s.status === 'processing') ?? null,
@@ -1271,6 +1296,8 @@ export default function WikiSourcesPanel() {
               metadata={metadata}
               wikiId={selectedWikiId}
               rawRefreshKey={rawRefreshKey}
+              folderMeta={folderMeta}
+              onSetFolderMeta={handleSetFolderMeta}
               onReadPage={handleReadPage}
               onDeletePage={handleDeletePage}
               onDeleteRaw={handleDeleteRaw}
@@ -1986,6 +2013,8 @@ function PagesTabContent({
   metadata,
   wikiId,
   rawRefreshKey,
+  folderMeta,
+  onSetFolderMeta,
   onReadPage,
   onReadRaw,
   onDeletePage,
@@ -2003,6 +2032,9 @@ function PagesTabContent({
   metadata: Record<string, string> | null;
   wikiId: string;
   rawRefreshKey: number;
+  /** parsed folder_meta: folder path -> its description ("reason"). */
+  folderMeta: Record<string, { description: string }>;
+  onSetFolderMeta: (folderPath: string, description: string) => void;
   onReadPage: (p: WikiPage) => void;
   onReadRaw: (filename: string) => void;
   onDeletePage: (p: WikiPage) => Promise<void> | void;
@@ -2078,6 +2110,29 @@ function PagesTabContent({
                     <span className="_wiki-detail-folder-name">{folder}</span>
                     <span className="_wiki-detail-folder-count">{folderPages.length}</span>
                   </button>
+                )}
+                {!isRoot && !isCollapsed && (
+                  <div className="_wiki-detail-folder-reason">
+                    <span
+                      className={`_wiki-detail-folder-reason-text${folderMeta[folder]?.description ? '' : ' is-empty'}`}
+                    >
+                      {folderMeta[folder]?.description || t('wiki.detail.folder.noReason')}
+                    </span>
+                    <button
+                      type="button"
+                      className="_wiki-detail-folder-reason-edit"
+                      onClick={() => {
+                        const cur = folderMeta[folder]?.description || '';
+                        const next = window.prompt(
+                          t('wiki.detail.folder.reasonPrompt', { folder }),
+                          cur,
+                        );
+                        if (next !== null && next.trim() !== cur) onSetFolderMeta(folder, next.trim());
+                      }}
+                    >
+                      {t('wiki.detail.folder.editReason')}
+                    </button>
+                  </div>
                 )}
                 {(isRoot || !isCollapsed) &&
                   folderPages.map((page) => {

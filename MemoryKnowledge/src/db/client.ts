@@ -158,6 +158,8 @@ export function migrate(_db: Db, raw: Database.Database): void {
   addColumnIfMissing(raw, "knowledge_code_graph", "summary", "TEXT");
   addColumnIfMissing(raw, "knowledge_wiki", "service_url", "TEXT");
   addColumnIfMissing(raw, "knowledge_wiki", "summary", "TEXT");
+  // Per-folder descriptions (JSON map folderPath -> {description, updatedAt}).
+  addColumnIfMissing(raw, "knowledge_wiki", "folder_meta", "TEXT");
   // service_id on audit tables is nullable → safe to add to existing dev DBs.
   addColumnIfMissing(raw, "knowledge_wiki_audit", "service_id", "TEXT");
   addColumnIfMissing(raw, "knowledge_code_graph_audit", "service_id", "TEXT");

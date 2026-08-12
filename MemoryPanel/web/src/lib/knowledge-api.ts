@@ -75,6 +75,8 @@ export interface WikiDetail {
   name: string;
   service_url: string | null;
   summary: string | null;
+  /** JSON map of per-folder descriptions: { "<folder path>": { description, updatedAt } }. */
+  folder_meta?: string | null;
   status: 'draft' | 'pending' | 'processing' | 'ready' | 'failed' | 'missing';
   internal_status?: string | null;
   sync_error: string | null;
@@ -314,6 +316,10 @@ export const knowledgeApi = {
     /** 获取详情（含 status，用于 ingest 后轮询） */
     get: (wikiId: string): Promise<WikiDetail> =>
       panelPost('/wiki/get', { wiki_id: wikiId }),
+
+    /** 设置/清空某个文件夹的描述（"reason"）。description 为空则清除。 */
+    setFolderMeta: (wikiId: string, folderPath: string, description: string): Promise<WikiDetail> =>
+      panelPost('/wiki/folder-meta/set', { wiki_id: wikiId, folder_path: folderPath, description }),
 
     /** 触发异步 ingest（返回后轮询 get 看 status） */
     ingest: (wikiId: string): Promise<void> =>
