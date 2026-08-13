@@ -71,6 +71,7 @@ export const META_ACTIONS = [
   'acl/grant',
   'acl/revoke',
   'acl/list',
+  'acl/list-all',
   'acl/check',
   'auth/verify',
   'instance-quota/get',

@@ -173,6 +173,8 @@ export interface IMetadataStore {
   revokeAcl(id: string): MaybePromise<void>;
   listAclByAsset(assetId: string, pagination?: PaginationParams | null): MaybePromise<ListPage<AclEntity>>;
   listAclBySubject(subjectType: string, subjectId: string, pagination?: PaginationParams | null): MaybePromise<ListPage<AclEntity>>;
+  /** All ACL grants across every asset (admin audit view). */
+  listAllAcl(pagination?: PaginationParams | null): MaybePromise<ListPage<AclEntity>>;
 
   // ── ConfigParam ──
   getConfigParam(

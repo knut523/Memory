@@ -19,10 +19,13 @@ import {
   fetchAudit,
   fetchVerify,
   fetchGaps,
+  fetchGrants,
+  revokeGrant,
   type PendingPairing,
   type AuditEvent,
   type KnowledgeGap,
   type VerifyResult,
+  type AclGrant,
 } from '@/lib/api/admin';
 import './admin-page.css';
 
@@ -40,24 +43,28 @@ export function AdminPage() {
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [gaps, setGaps] = useState<KnowledgeGap[]>([]);
   const [verify, setVerify] = useState<VerifyResult | null>(null);
+  const [grants, setGrants] = useState<AclGrant[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [approving, setApproving] = useState<string | null>(null);
+  const [revoking, setRevoking] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [p, a, g, v] = await Promise.all([
+      const [p, a, g, v, gr] = await Promise.all([
         fetchPending().catch(() => [] as PendingPairing[]),
         fetchAudit(50).catch(() => [] as AuditEvent[]),
         fetchGaps().catch(() => ({ gaps: [] as KnowledgeGap[], sources: 0 })),
         fetchVerify().catch(() => null),
+        fetchGrants().catch(() => [] as AclGrant[]),
       ]);
       setPending(p);
       setAudit(a);
       setGaps(g.gaps);
       setVerify(v);
+      setGrants(gr);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -80,6 +87,22 @@ export function AdminPage() {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
         setApproving(null);
+      }
+    },
+    [load],
+  );
+
+  const onRevoke = useCallback(
+    async (id: string) => {
+      setRevoking(id);
+      setError(null);
+      try {
+        await revokeGrant(id);
+        await load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setRevoking(null);
       }
     },
     [load],
@@ -154,6 +177,50 @@ export function AdminPage() {
             </div>
           ) : (
             <div className="_admin-empty">{t('admin.verify.unavailable')}</div>
+          )}
+        </Card.Body>
+      </Card>
+
+      {/* ===== Grants (who can see what) ===== */}
+      <Card>
+        <Card.Body title={t('admin.grants.title')}>
+          <p className="_admin-section-sub">{t('admin.grants.subtitle')}</p>
+          {grants.length === 0 ? (
+            <div className="_admin-empty">{t('admin.grants.empty')}</div>
+          ) : (
+            <table className="_admin-table">
+              <thead>
+                <tr>
+                  <th>{t('admin.grants.asset')}</th>
+                  <th>{t('admin.grants.subject')}</th>
+                  <th>{t('admin.grants.permission')}</th>
+                  <th>{t('admin.grants.expires')}</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {grants.map((g) => (
+                  <tr key={g.id}>
+                    <td className="_mono">{g.asset_id}</td>
+                    <td className="_mono">
+                      {g.subject_type}:{g.subject_id}
+                      {g.effect === 'deny' && <span className="_admin-tag">deny</span>}
+                    </td>
+                    <td>{g.permission}</td>
+                    <td className="_admin-nowrap">{g.expires_at ? new Date(g.expires_at).toLocaleDateString() : '—'}</td>
+                    <td className="_admin-right">
+                      <Button
+                        type="weak"
+                        onClick={() => void onRevoke(g.id)}
+                        disabled={revoking === g.id}
+                      >
+                        {revoking === g.id ? t('admin.grants.revoking') : t('admin.grants.revoke')}
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </Card.Body>
       </Card>

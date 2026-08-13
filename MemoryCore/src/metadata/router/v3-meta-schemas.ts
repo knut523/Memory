@@ -319,6 +319,7 @@ export const aclGrantSchema = z
   });
 export const aclRevokeSchema = z.object({ id: nonEmpty });
 export const aclListSchema = z.object({ asset_id: nonEmpty }).merge(paginationInputSchema);
+export const aclListAllSchema = z.object({}).merge(paginationInputSchema);
 export const aclCheckSchema = userIdOrKeyFields
   .extend({
     asset_id: nonEmpty,
@@ -431,6 +432,7 @@ export const V3_SCHEMAS = {
   "/v3/meta/acl/grant": aclGrantSchema,
   "/v3/meta/acl/revoke": aclRevokeSchema,
   "/v3/meta/acl/list": aclListSchema,
+  "/v3/meta/acl/list-all": aclListAllSchema,
   "/v3/meta/acl/check": aclCheckSchema,
   "/v3/meta/auth/verify": authVerifySchema,
   "/v3/meta/instance-quota/get": instanceQuotaGetSchema,

@@ -7,7 +7,7 @@
  * src/panel/http/routes/admin.ts); this client only carries the same session headers every other
  * panel call uses. A non-admin gets 403 here even though the nav item is hidden for them.
  */
-import { request, ApiError } from './base';
+import { request, ApiError, metaPost } from './base';
 import { getPanelSession } from '../panelSession';
 
 const ADMIN_PREFIX = '/api/v1/admin';
@@ -93,4 +93,30 @@ export async function fetchGaps(): Promise<{ gaps: KnowledgeGap[]; sources: numb
     authHeaders(),
   );
   return { gaps: r.gaps ?? [], sources: r.sources ?? 0 };
+}
+
+/** One ACL grant (who can do what to which asset). */
+export interface AclGrant {
+  id: string;
+  asset_id: string;
+  subject_type: string;
+  subject_id: string;
+  permission: string;
+  effect: string;
+  expires_at?: string | null;
+  created_at?: string;
+}
+
+/**
+ * Every grant across all assets — the "who can see what" audit view. Goes through the /meta proxy;
+ * acl/list-all is gated server-side on system_admin in the meta router, so a non-admin gets
+ * permission_denied even though the panel nav hides this section.
+ */
+export async function fetchGrants(limit = 200): Promise<AclGrant[]> {
+  const r = await metaPost<{ items?: AclGrant[]; total?: number }>('acl/list-all', { limit });
+  return r.items ?? [];
+}
+
+export async function revokeGrant(id: string): Promise<void> {
+  await metaPost('acl/revoke', { id });
 }

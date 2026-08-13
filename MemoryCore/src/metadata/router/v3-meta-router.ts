@@ -295,6 +295,10 @@ const routeTable: Record<string, Handler> = {
   [`${V3_PREFIX}/acl/list`]: bind(S.aclListSchema, (d, c, s) =>
     s.listAclByAssetForCaller(d.asset_id, c, resolvePagination(d)),
   ),
+  // Admin audit view: every grant across all assets. Gated on system_admin inside the service.
+  [`${V3_PREFIX}/acl/list-all`]: bind(S.aclListAllSchema, (d, c, s) =>
+    s.listAllAclForCaller(c, resolvePagination(d)),
+  ),
   [`${V3_PREFIX}/acl/check`]: bind(S.aclCheckSchema, async (d, _c, s) => {
     if (d.agent_id) await requireEntity(s, EntityType.Agent, d.agent_id);
     return s.checkAssetPermission(d);

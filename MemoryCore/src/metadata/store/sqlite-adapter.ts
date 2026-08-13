@@ -1545,6 +1545,18 @@ export class SqliteMetadataStore implements IMetadataStore {
     );
   }
 
+  listAllAcl(pagination?: PaginationParams | null): ListPage<AclEntity> {
+    const base = "FROM meta_asset_acl";
+    return this.selectList(
+      `SELECT COUNT(*) AS c ${base}`,
+      [],
+      `SELECT * ${base} ORDER BY created_at DESC`,
+      [],
+      pagination,
+      (r) => r as unknown as AclEntity,
+    );
+  }
+
   listAclBySubject(subjectType: string, subjectId: string, pagination?: PaginationParams | null): ListPage<AclEntity> {
     const base = "FROM meta_asset_acl WHERE subject_type = ? AND subject_id = ?";
     return this.selectList(

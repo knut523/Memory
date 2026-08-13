@@ -1754,8 +1754,19 @@ export class MetadataService {
   async revokeAclForCaller(id: string, ctx: V3AuthContext): Promise<void> {
     const acl = await this.store.getAclById(id);
     if (!acl) throw new MetadataError("acl_not_found", `acl not found: ${id}`);
-    await this.assertCallerIsAssetOwner(ctx, acl.asset_id);
+    // A system_admin may revoke any grant (the admin grants/audit view); otherwise the caller must
+    // own the asset the grant is on.
+    if (!ctx.isSystemAdmin) await this.assertCallerIsAssetOwner(ctx, acl.asset_id);
     return this.revokeAcl(id);
+  }
+
+  /** Admin audit view: list every ACL grant across all assets. system_admin only. */
+  async listAllAclForCaller(ctx: V3AuthContext, pagination: PaginationParams): Promise<PaginatedResult<AclEntity>> {
+    if (!ctx.isSystemAdmin) {
+      throw new MetadataError("permission_denied", "system admin required to list all grants");
+    }
+    const page = await this.store.listAllAcl(pagination);
+    return wrapPaginated(page.items, page.total, pagination);
   }
 
   async listAclByAssetForCaller(
