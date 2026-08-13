@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useTeams, useAgents } from '@/services';
 import { useCurrentRole } from '@/services/useCurrentRole';
 import TaskWorkbench from './components/TaskWorkbench';
+import { OnboardingCard } from './components/OnboardingCard';
 
 export function WorkbenchPage() {
   const { auth } = useAuthStore();
@@ -22,11 +23,14 @@ export function WorkbenchPage() {
   if (!auth) return null;
 
   return (
-    <TaskWorkbench
-      activeTeamId={activeTeamId}
-      currentUser={auth.user_id}
-      agents={teamAgents}
-      isAdmin={role === 'admin'}
-    />
+    <>
+      <OnboardingCard />
+      <TaskWorkbench
+        activeTeamId={activeTeamId}
+        currentUser={auth.user_id}
+        agents={teamAgents}
+        isAdmin={role === 'admin'}
+      />
+    </>
   );
 }

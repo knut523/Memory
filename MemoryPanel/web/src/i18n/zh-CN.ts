@@ -4,6 +4,17 @@ export const zhCN = {
   // ===== App =====
   'app.checkingSession': '正在检测登录态…',
 
+  // ===== 首次上手引导 =====
+  'onboarding.title': '欢迎 — 三步快速上手',
+  'onboarding.subtitle': '你的团队记忆还是空的。这是让它变得有用的最快方式。',
+  'onboarding.dismiss': '知道了',
+  'onboarding.wiki.title': '添加知识',
+  'onboarding.wiki.desc': '创建 Wiki、上传文档，用文件夹（带说明）组织起来。',
+  'onboarding.memory.title': '记录记忆',
+  'onboarding.memory.desc': '导入对话，让 Agent 记住决策与偏好。',
+  'onboarding.code.title': '索引代码',
+  'onboarding.code.desc': '添加仓库，团队即可搜索符号、浏览代码库。',
+
   // ===== Menu / Navigation =====
   'menu.workbench_board': '任务看板',
   'menu.wiki': 'Wiki 知识库',

@@ -4,6 +4,17 @@ export const enUS = {
   // ===== App =====
   'app.checkingSession': 'Checking session…',
 
+  // ===== First-run onboarding =====
+  'onboarding.title': 'Welcome — get started in 3 steps',
+  'onboarding.subtitle': 'Your team memory is empty. Here is the fastest way to make it useful.',
+  'onboarding.dismiss': 'Dismiss',
+  'onboarding.wiki.title': 'Add knowledge',
+  'onboarding.wiki.desc': 'Create a wiki, upload docs, organize them into folders with a reason.',
+  'onboarding.memory.title': 'Record memory',
+  'onboarding.memory.desc': 'Import a conversation so agents remember decisions and preferences.',
+  'onboarding.code.title': 'Index code',
+  'onboarding.code.desc': 'Add a repo so the team can search symbols and explore the codebase.',
+
   // ===== Menu / Navigation =====
   'menu.workbench_board': 'Task Board',
   'menu.wiki': 'Wiki Knowledge Base',
