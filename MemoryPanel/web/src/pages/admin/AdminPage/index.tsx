@@ -27,6 +27,7 @@ import {
   type VerifyResult,
   type AclGrant,
 } from '@/lib/api/admin';
+import { ConnectCoder } from './ConnectCoder';
 import './admin-page.css';
 
 function fmtTs(ts: number): string {
@@ -121,6 +122,9 @@ export function AdminPage() {
       </div>
 
       {error && <div className="_admin-error">{error}</div>}
+
+      {/* ===== Connect a coder (how-to) ===== */}
+      <ConnectCoder />
 
       {/* ===== Connect requests ===== */}
       <Card>

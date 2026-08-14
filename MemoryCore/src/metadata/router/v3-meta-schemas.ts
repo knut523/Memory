@@ -8,7 +8,7 @@ import { z } from "zod";
 import { paginationInputSchema } from "./pagination.js";
 
 // ── 枚举 ──
-const assetType = z.enum(["skill", "llm_wiki", "code_graph", "chat_memory"]);
+const assetType = z.enum(["skill", "llm_wiki", "code_graph", "chat_memory", "llm_wiki_page"]);
 const visibility = z.enum(["private", "team", "restricted", "agent", "task"]);
 const assetStatus = z.enum(["draft", "candidate", "approved", "deprecated", "archived", "failed"]);
 const injectionMode = z.enum(["direct", "summary", "tool", "reference"]);

@@ -123,3 +123,23 @@
   font-size: 12px;
   color: var(--tea-color-text-tertiary);
 }
+
+/* ===== Connect a coder (how-to) ===== */
+._connect-row { display: flex; gap: 12px; align-items: flex-start; margin: 10px 0; }
+._connect-step {
+  flex: 0 0 22px; width: 22px; height: 22px; border-radius: 50%;
+  background: #006eff; color: #fff; font-size: 12px; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center; margin-top: 1px;
+}
+._connect-body { flex: 1 1 auto; font-size: 13px; line-height: 1.6; color: #444; }
+._connect-label { margin-bottom: 6px; }
+._connect-kind { margin-bottom: 8px; }
+._connect-cmd {
+  display: flex; align-items: center; gap: 8px;
+  background: #1e1e1e; border-radius: 6px; padding: 8px 10px; max-width: 640px;
+}
+._connect-cmd code {
+  flex: 1 1 auto; color: #e6e6e6; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px; user-select: all; white-space: nowrap; overflow-x: auto;
+}
+._connect-cmd .tea-btn { flex: 0 0 auto; }
