@@ -396,6 +396,18 @@ export const knowledgeApi = {
     pageDelete: (wikiId: string, refs: string[]): Promise<void> =>
       panelPost('/wiki/page/rm', { wiki_id: wikiId, refs }),
 
+    /** Per-page sharing (Pillar-4): current override map { "<pageId>": {uuid, visibility} } — owner-only. */
+    pageShareList: async (wikiId: string): Promise<Record<string, { uuid: string; visibility: string }>> => {
+      const d = await panelPost<{ shares: Record<string, { uuid: string; visibility: string }> }>(
+        '/wiki/page/shares', { wiki_id: wikiId }
+      );
+      return d.shares ?? {};
+    },
+
+    /** Per-page sharing: set one page's visibility (private|restricted|team) or clear (null → inherit wiki). */
+    pageShareSet: (wikiId: string, ref: string, visibility: string | null): Promise<void> =>
+      panelPost('/wiki/page/share', { wiki_id: wikiId, ref, visibility }).then(() => undefined),
+
     /** 全文搜索 */
     search: (wikiId: string, query: string, limit?: number): Promise<{
       results: Array<{ path: string; title: string; snippet: string; score: number; type: string }>;

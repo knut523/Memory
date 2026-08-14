@@ -13,6 +13,7 @@
  */
 
 import { join, resolve, normalize } from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   rmSync,
   mkdirSync,
@@ -42,6 +43,30 @@ import {
   sha256,
   type SourceStatus,
 } from "../engines/wiki/index-db.js";
+
+/** Per-page sharing (Pillar-4). page_uuid is the stable memory-core asset key (survives re-ingest). */
+export type PageShareEntry = { uuid: string; visibility: string };
+type PageShareMap = Record<string, PageShareEntry>;
+
+/** asset_id of a page-asset in memory-core. Opaque, always a valid id segment (^[A-Za-z0-9_-]+$). */
+export function pageAssetId(uuid: string): string {
+  return `wpage_${uuid}`;
+}
+
+function mintPageUuid(): string {
+  return randomUUID().replace(/-/g, "");
+}
+
+function parsePageShare(json: string | null): PageShareMap {
+  if (!json) return {};
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    if (parsed && typeof parsed === "object") return parsed as PageShareMap;
+  } catch {
+    /* corrupt JSON → start fresh rather than fail the write */
+  }
+  return {};
+}
 
 export interface WikiBuildContext {
   wikiId: string;
@@ -283,6 +308,44 @@ export class WikiService {
     if (desc) map[folderPath] = { description: desc, updatedAt: new Date().toISOString() };
     else delete map[folderPath];
     return this.store.updateWikiMeta(serviceId, wikiId, { folder_meta: JSON.stringify(map) });
+  }
+
+  /**
+   * Per-page sharing override (Pillar-4). Sets a page's visibility (private | restricted | team), or
+   * clears it (visibility=null → the page inherits the wiki's visibility). The stable page_uuid is
+   * minted once per relPath and reused (survives re-ingest since relPath is stable); it is the
+   * memory-core asset key: asset_id = wpage_<uuid>. This only persists the hub-side mapping — syncing
+   * the page-asset into memory-core (asset/create|update|delete) is the caller's (route layer) job,
+   * since that needs the wiki owner/team + caller identity for the authorized core write.
+   * Returns { row, uuid, assetId, visibility } or null if the wiki is missing.
+   */
+  setPageShare(
+    serviceId: string,
+    wikiId: string,
+    relPath: string,
+    visibility: string | null,
+  ): { row: WikiRow; uuid: string; assetId: string; visibility: string | null } | null {
+    const row = this.store.getWikiById(serviceId, wikiId);
+    if (!row) return null;
+    const map = parsePageShare(row.page_share);
+    const existing = map[relPath];
+    let uuid = existing?.uuid ?? "";
+    if (visibility === null) {
+      delete map[relPath];
+    } else {
+      if (!uuid) uuid = mintPageUuid();
+      map[relPath] = { uuid, visibility };
+    }
+    const updated = this.store.updateWikiMeta(serviceId, wikiId, { page_share: JSON.stringify(map) });
+    if (!updated) return null;
+    return { row: updated, uuid, assetId: uuid ? pageAssetId(uuid) : "", visibility };
+  }
+
+  /** All per-page overrides for a wiki: { "<relPath>": { uuid, visibility } }. Empty when none. */
+  getPageShare(serviceId: string, wikiId: string): PageShareMap {
+    const row = this.store.getWikiById(serviceId, wikiId);
+    if (!row) return {};
+    return parsePageShare(row.page_share);
   }
 
   /**

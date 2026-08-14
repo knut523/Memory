@@ -201,6 +201,37 @@ export function registerKnowledgeWikiRoutes(api: Hono, deps: PanelDeps): void {
     return runKs(c, () => kc.wikiPageRm(teamId, wikiId, refs, gate.userId));
   });
 
+  // Pillar-4 per-page sharing — the caller's real user key is forwarded to the KS so its owner-check +
+  // owner-authorized core-sync work (the service authToken is not a member of the owner's team).
+  api.post('/knowledge/wiki/page/shares', mw, async (c) => {
+    const ctx = buildCtx(c);
+    const body = await readJson(c);
+    const wikiId = str(body, 'wiki_id');
+    if (!wikiId) return respondControlError(c, 400, 'MISSING_WIKI_ID');
+    const gate = await requireKnowledgeRead(deps, c, ctx, wikiId);
+    if ('error' in gate) return gate.error;
+    const userKey = c.req.header('x-tdai-user-key') ?? '';
+    const kc = deps.knowledgeClientFactory(ctx.instanceId);
+    return runKs(c, () => kc.wikiPageShareList(wikiId, userKey));
+  });
+
+  api.post('/knowledge/wiki/page/share', mw, async (c) => {
+    const ctx = buildCtx(c);
+    const body = await readJson(c);
+    const wikiId = str(body, 'wiki_id');
+    const ref = str(body, 'ref');
+    if (!wikiId) return respondControlError(c, 400, 'MISSING_WIKI_ID');
+    if (!ref) return respondControlError(c, 400, 'MISSING_REF');
+    const rawVis = (body as Record<string, unknown>).visibility;
+    const visibility = rawVis === null ? null : typeof rawVis === 'string' ? rawVis : undefined;
+    if (visibility === undefined) return respondControlError(c, 400, 'INVALID_VISIBILITY');
+    const gate = await requireKnowledgeRead(deps, c, ctx, wikiId, { action: 'write' });
+    if ('error' in gate) return gate.error;
+    const userKey = c.req.header('x-tdai-user-key') ?? '';
+    const kc = deps.knowledgeClientFactory(ctx.instanceId);
+    return runKs(c, () => kc.wikiPageShareSet(wikiId, ref, visibility, userKey));
+  });
+
   // W16 search — id-only
   api.post('/knowledge/wiki/search', mw, async (c) => {
     const ctx = buildCtx(c);

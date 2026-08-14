@@ -82,6 +82,10 @@ export const knowledgeWiki = sqliteTable(
     // folder path: { "<relPath dir>": { description, updatedAt } }. Folders themselves stay derived
     // from page paths; this only annotates them.
     folderMeta: text("folder_meta"),
+    // Per-page sharing overrides (Pillar-4 per-page ACL). JSON map keyed by page relPath:
+    // { "<relPath>": { uuid, visibility } }. uuid is the stable page-asset key (asset_id = wpage_<uuid>);
+    // visibility mirrors the memory-core asset visibility (private | restricted | team). Absent page = inherits wiki.
+    pageShare: text("page_share"),
   },
   (table) => [
     uniqueIndex("idx_kwiki_team_name")

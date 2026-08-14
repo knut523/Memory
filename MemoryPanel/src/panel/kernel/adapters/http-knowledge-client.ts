@@ -49,13 +49,16 @@ interface CoreEnvelope<T> {
 export class HttpKnowledgeClient implements KnowledgeClientPort {
   constructor(private readonly cfg: KnowledgeClientConfig) {}
 
-  private async post<T>(path: string, body: unknown): Promise<T> {
+  private async post<T>(path: string, body: unknown, userKey?: string): Promise<T> {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), this.cfg.timeoutMs ?? 15_000);
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (this.cfg.authToken) headers.Authorization = `Bearer ${this.cfg.authToken}`;
       if (this.cfg.serviceId) headers['x-tdai-service-id'] = this.cfg.serviceId;
+      // Forward the real caller's key when given (Pillar-4 page-sharing needs the owner identity for
+      // the KS's auth/verify + owner-authorized core-sync; the service authToken is not a team member).
+      if (userKey) headers['x-tdai-user-key'] = userKey;
       const resp = await fetch(`${this.cfg.baseUrl}${path}`, {
         method: 'POST',
         headers,
@@ -108,6 +111,23 @@ export class HttpKnowledgeClient implements KnowledgeClientPort {
 
   async wikiList(teamId: string, opts?: { status?: string; limit?: number; offset?: number }): Promise<WikiListResult> {
     return this.post('/v3/wiki/list', { team_id: teamId, ...opts });
+  }
+
+  // ── Pillar-4 per-page sharing (owner identity forwarded via userKey) ──
+  async wikiPageShareList(
+    wikiId: string,
+    userKey: string,
+  ): Promise<{ shares: Record<string, { uuid: string; visibility: string }> }> {
+    return this.post('/v3/wiki/page/shares', { wiki_id: wikiId }, userKey);
+  }
+
+  async wikiPageShareSet(
+    wikiId: string,
+    ref: string,
+    visibility: string | null,
+    userKey: string,
+  ): Promise<{ ref: string; visibility: string | null; asset_id?: string }> {
+    return this.post('/v3/wiki/page/share', { wiki_id: wikiId, ref, visibility }, userKey);
   }
 
   // ═══════════════ Wiki · raw 文件层 ═══════════════

@@ -175,6 +175,10 @@ export interface KnowledgeClientPort {
   wikiPageWrite(teamId: string, wikiId: string, pages: WikiPageWriteItem[], userId?: string): Promise<{ items: WikiPageWriteResultItem[] }>;
   wikiPageRm(teamId: string, wikiId: string, refs: string[], userId?: string): Promise<WikiPageRmResult>;
 
+  // Wiki — Pillar-4 per-page sharing (owner identity forwarded via userKey)
+  wikiPageShareList(wikiId: string, userKey: string): Promise<{ shares: Record<string, { uuid: string; visibility: string }> }>;
+  wikiPageShareSet(wikiId: string, ref: string, visibility: string | null, userKey: string): Promise<{ ref: string; visibility: string | null; asset_id?: string }>;
+
   // Wiki — 派生视图（仅资产 id 寻址）
   wikiGraph(wikiId: string): Promise<WikiGraphData>;
   wikiSearch(wikiId: string, query: string, limit?: number, graph?: { hop?: number; decay?: number; minScore?: number }): Promise<WikiSearchResult>;

@@ -106,6 +106,8 @@ export interface WikiRow {
   summary: string | null;
   /** JSON map of per-folder descriptions: { "<folder path>": { description, updatedAt } }. */
   folder_meta: string | null;
+  /** JSON map of per-page sharing overrides: { "<relPath>": { uuid, visibility } } (Pillar-4 per-page ACL). */
+  page_share: string | null;
   version: number;
   last_sync_at: string | null;
   created_at: string;
@@ -142,6 +144,7 @@ export interface WikiMetaPatch {
   name?: string;
   summary?: string | null;
   folder_meta?: string | null;
+  page_share?: string | null;
 }
 
 // ───────────────────────── Audit ─────────────────────────

@@ -56,6 +56,7 @@ import { useResizable } from '@/lib/useResizable';
 import { useTeams, useAgents } from '@/services';
 import { useUserDisplayName } from '@/services/user-profile-store';
 import AllocateAssetDialog from '@/pages/ResourcePage/components/AllocateAssetDialog';
+import PageShareControl from './PageShareControl';
 import { readAuth } from '@/components/LoginGate';
 import { tea } from '@/lib/tea-bridge';
 import { findExistingRawFilenames, formatOverwriteFilenames } from './wiki-upload-utils';
@@ -1270,6 +1271,7 @@ export default function WikiSourcesPanel() {
               graphData={graphData}
               graphLoading={graphLoading}
               selectedPage={selectedPage}
+              wikiId={selectedWikiId}
               readLoading={readLoading}
               displayContent={displayContent}
               metadata={metadata}
@@ -1919,6 +1921,7 @@ function GraphTabContent({
   graphData,
   graphLoading,
   selectedPage,
+  wikiId,
   readLoading,
   displayContent,
   metadata,
@@ -1928,6 +1931,7 @@ function GraphTabContent({
   graphData: GraphData | null;
   graphLoading: boolean;
   selectedPage: WikiPage | null;
+  wikiId: string;
   readLoading: boolean;
   displayContent: string;
   metadata: Record<string, string> | null;
@@ -1960,6 +1964,7 @@ function GraphTabContent({
                 <CloseIcon size={14} />
               </Button>
             </div>
+            <PageShareControl wikiId={wikiId} pageRef={(selectedPage as any).id || selectedPage.path} />
             {metadata && (
               <div className="_wiki-detail-side-tags">
                 {metadata.type && <Tag size="sm">{metadata.type}</Tag>}
@@ -2043,12 +2048,38 @@ function PagesTabContent({
   const { t } = useTranslation();
   const { width: leftW, onMouseDown } = useResizable(260, 180, 400, 'left');
 
+  // Pillar-4 "My private files": per-page share map (owner-only endpoint). A page is "private" when it
+  // has a private override. Lets the owner see + filter the docs only they can access.
+  const [pageShares, setPageShares] = useState<Record<string, { uuid: string; visibility: string }>>({});
+  const [onlyPrivate, setOnlyPrivate] = useState(false);
+  useEffect(() => {
+    if (!wikiId) return;
+    let alive = true;
+    knowledgeApi.wiki
+      .pageShareList(wikiId)
+      .then((s) => alive && setPageShares(s))
+      .catch(() => alive && setPageShares({}));
+    return () => {
+      alive = false;
+    };
+  }, [wikiId]);
+  const pageVis = (p: WikiPage): string | undefined =>
+    pageShares[((p as any).id || p.path || '').replace(/^wiki\//, '').replace(/\.md$/, '')]?.visibility;
+  const privateCount = Object.values(pageShares).filter((s) => s.visibility === 'private').length;
+
   // Fold the flat page list into a FOLDER TREE by each page's path directory — so users see
   // intentional structure, not a flat dump. Root-level pages render ungrouped at the top; every
   // sub-folder is a collapsible group.
   const folders = useMemo(() => {
+    const src = onlyPrivate
+      ? pages.filter(
+          (p) =>
+            pageShares[((p as any).id || p.path || '').replace(/^wiki\//, '').replace(/\.md$/, '')]?.visibility ===
+            'private',
+        )
+      : pages;
     const map = new Map<string, WikiPage[]>();
-    for (const p of pages) {
+    for (const p of src) {
       const raw = (p.path || '').replace(/\\/g, '/');
       const slash = raw.lastIndexOf('/');
       const folder = slash > 0 ? raw.slice(0, slash) : '';
@@ -2057,7 +2088,7 @@ function PagesTabContent({
       else map.set(folder, [p]);
     }
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [pages]);
+  }, [pages, onlyPrivate, pageShares]);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
   const toggleFolder = (f: string) =>
     setCollapsedFolders((s) => {
@@ -2093,6 +2124,15 @@ function PagesTabContent({
               {type} {typeCounts[type]}
             </button>
           ))}
+          {privateCount > 0 && (
+            <button
+              className={`_wiki-detail-filter-tag${onlyPrivate ? ' is-active' : ''}`}
+              onClick={() => setOnlyPrivate((v) => !v)}
+              title="Pages only you can see (private)"
+            >
+              🔒 My private {privateCount}
+            </button>
+          )}
         </div>
         <div className="_wiki-detail-page-list">
           {folders.map(([folder, folderPages]) => {
@@ -2156,6 +2196,9 @@ function PagesTabContent({
                             style={{ background: TYPE_COLORS[page.type] || TYPE_COLOR_FALLBACK }}
                           />
                           <span className="_wiki-detail-page-item-title">{page.title}</span>
+                          {pageVis(page) === 'private' && (
+                            <span title="Private — only you" style={{ marginLeft: 4, fontSize: 11 }}>🔒</span>
+                          )}
                         </button>
                         <Button
                           type="text"
@@ -2190,6 +2233,9 @@ function PagesTabContent({
               />
               <h1 className="_wiki-detail-content-title">{selectedPage.title}</h1>
             </div>
+            {selectedPage.type !== 'raw' && !((selectedPage as any).path || '').startsWith('raw/') && (
+              <PageShareControl wikiId={wikiId} pageRef={(selectedPage as any).id || selectedPage.path} />
+            )}
             {metadata && (
               <div className="_wiki-detail-side-tags">
                 {metadata.type && <Tag size="sm">{metadata.type}</Tag>}

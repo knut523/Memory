@@ -437,6 +437,7 @@ export class SqliteKnowledgeStore implements IKnowledgeStore {
     if (patch.name !== undefined) set.name = patch.name;
     if (patch.summary !== undefined) set.summary = patch.summary;
     if (patch.folder_meta !== undefined) set.folderMeta = patch.folder_meta;
+    if (patch.page_share !== undefined) set.pageShare = patch.page_share;
     this.db
       .update(knowledgeWiki)
       .set(set)
@@ -642,6 +643,7 @@ export class SqliteKnowledgeStore implements IKnowledgeStore {
       service_url: r.serviceUrl ?? null,
       summary: r.summary ?? null,
       folder_meta: r.folderMeta ?? null,
+      page_share: r.pageShare ?? null,
       version: r.version,
       last_sync_at: r.lastSyncAt,
       created_at: r.createdAt,

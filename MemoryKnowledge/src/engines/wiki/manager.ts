@@ -101,6 +101,12 @@ export interface SearchOptions {
   decay?: number;
   /** Minimum score threshold; nodes below this are dropped. */
   minScore?: number;
+  /**
+   * Per-page ACL (Pillar-4): page-ids (idFromPath form) the caller may NOT read. Excluded pages are
+   * dropped from results, resultIds, related-neighbours, links and count — computed by the route from
+   * the caller's identity, applied here so no hidden title/path/count leaks (council #3).
+   */
+  excludeIds?: Set<string>;
 }
 
 export interface WikiSourceManager {
@@ -405,12 +411,14 @@ function buildRelated(
   pageId: string,
   pg: PageGraph,
   metaById: Map<string, PageMeta>,
+  exclude?: Set<string>,
 ): RelatedPage[] {
   const out = pg.outAdj.get(pageId) ?? new Set<string>();
   const inn = pg.inAdj.get(pageId) ?? new Set<string>();
   const all = new Set<string>([...out, ...inn]);
   const items: RelatedPage[] = [];
   for (const nbId of all) {
+    if (exclude?.has(nbId)) continue; // per-page ACL: never leak a hidden page as a "related" neighbour
     const nbMeta = metaById.get(nbId);
     if (!nbMeta) continue;
     const isOut = out.has(nbId);
@@ -426,7 +434,7 @@ function buildRelated(
   return items.slice(0, RELATED_CAP);
 }
 
-function idFromPath(relPath: string): string {
+export function idFromPath(relPath: string): string {
   return relPath.replace(/^wiki\//, "").replace(/\.md$/, "");
 }
 
@@ -694,7 +702,10 @@ export function createWikiSourceManager(dataDir: string): WikiSourceManager {
 
     const results: SearchResult[] = [];
     const resultIds: string[] = [];
+    const exclude = options.excludeIds;
     for (const hit of hits) {
+      if (exclude?.has(hit.id)) continue; // per-page ACL: denied page is invisible (also removes it
+                                          // from related/links/count below — council #3, no leak)
       const meta = metaById.get(hit.id);
       if (!meta) continue;
       const result: SearchResult = {
@@ -704,7 +715,7 @@ export function createWikiSourceManager(dataDir: string): WikiSourceManager {
         score: hit.score,
         type: meta.type,
         hop: hit.hop,
-        related: buildRelated(meta.id, pg, metaById),
+        related: buildRelated(meta.id, pg, metaById, exclude),
       };
       if (hit.hop > 0 && hit.via) result.via = hit.via;
       results.push(result);

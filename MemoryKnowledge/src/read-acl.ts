@@ -6,9 +6,12 @@
  * (owner -> team-membership -> visibility -> role-default -> ACL). code_graph_id / wiki_id are the
  * same value as the memory-core asset_id, so no id mapping is needed.
  *
- * includeCode (full source) is treated as a DISTINCT, stricter grant: it is allowed only when the
- * caller is the OWNER or holds an explicit ACL/grant on the resource — never by team role-default.
- * We derive that from the check's `reason` (owner / acl:*), so no separate permission is required.
+ * includeCode (full source) is treated as a DISTINCT, stricter tier: until a dedicated source-tier
+ * permission exists in the grant model it is allowed for the OWNER ONLY. A generic 'use' grant is
+ * intentionally NOT accepted as a source-tier proxy ('use' means "an agent may execute/bind this
+ * asset", not "read its source" — overloading it would leak full source to execution grantees). This
+ * closes the Hole-B cross-team leak: the old check let any 'acl:*' read grant (incl. a cross-team
+ * team-read) serve full source. Symbols/signatures (read tier) remain available to any read grant.
  *
  * Fails CLOSED: no user key, memory-core unreachable, or a non-allow verdict => the read is denied.
  * Disabled only when MEMORY_CORE_URL is unset (local dev), so existing single-tenant setups are
@@ -29,7 +32,7 @@ export function readAclEnabled(): boolean {
 
 interface CheckResult { allowed: boolean; reason: string }
 
-async function aclCheck(userKey: string, assetId: string, serviceId: string): Promise<CheckResult> {
+async function aclCheck(userKey: string, assetId: string, serviceId: string, action: string = "read"): Promise<CheckResult> {
   try {
     const res = await fetch(`${MEMORY_CORE_URL}/v3/meta/acl/check`, {
       method: "POST",
@@ -38,7 +41,7 @@ async function aclCheck(userKey: string, assetId: string, serviceId: string): Pr
         "x-tdai-service-id": serviceId,
         "x-tdai-user-key": MEMORY_CORE_KEY,
       },
-      body: JSON.stringify({ user_key: userKey, asset_id: assetId, action: "read" }),
+      body: JSON.stringify({ user_key: userKey, asset_id: assetId, action }),
       signal: AbortSignal.timeout(4000),
     });
     const json = (await res.json().catch(() => null)) as
@@ -74,11 +77,45 @@ export async function enforceReadAcl(
   const { allowed, reason } = await aclCheck(userKey, assetId, serviceId);
   if (!allowed) return c.json(wrapError(403, `permission denied: ${reason || "not_permitted"}`), 403);
 
-  if (opts?.requireOwner && !(reason === "owner" || reason.startsWith("acl:"))) {
+  if (opts?.requireOwner && reason !== "owner") {
+    // Full source (includeCode) is a DISTINCT, stricter tier. Until a dedicated source-tier
+    // permission ('include_code'/'read_source') exists in the grant model, gate it on OWNER ONLY.
+    // We deliberately do NOT accept a generic 'use' grant as a source-tier proxy: 'use' means "an
+    // agent may execute/bind this asset", NOT "read its source" — overloading it would leak full
+    // source to execution grantees (council STOP, 2026-08-13). The old `reason.startsWith("acl:")`
+    // check let ANY read grant (incl. a cross-team team-read) through → cross-team full-source leak
+    // (Hole B). A real source-tier permission must land BEFORE cross-team full-source sharing (P5);
+    // plain read grants continue to receive only symbols/signatures (requireOwner:false).
     return c.json(
-      wrapError(403, "permission denied: full source (includeCode) requires owner or an explicit grant"),
+      wrapError(403, "permission denied: full source (includeCode) requires ownership"),
       403,
     );
   }
   return null;
+}
+
+/**
+ * Boolean read check for a single asset (Pillar-4 per-page ACL). Same delegation as enforceReadAcl
+ * but returns true/false instead of a Response, so callers can FILTER a set of pages (search hits /
+ * page refs) fail-closed: when read-ACL is off it allows (single-tenant dev); a missing user key or
+ * any non-allow / unreachable verdict denies.
+ */
+export async function isReadAllowed(c: Context, assetId: string): Promise<boolean> {
+  const userKey =
+    (c.req.header("x-tdai-user-key") || "").trim() ||
+    (c.req.header("authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  const serviceId = c.req.header("x-tdai-service-id") || "default";
+  return isReadAllowedFor(userKey, assetId, serviceId);
+}
+
+/**
+ * Same as isReadAllowed but the caller identity is passed directly — for callers that don't have the
+ * Hono Context (e.g. the MCP tool executor). Fail-closed: read-ACL off → true (single-tenant dev);
+ * missing key or any non-allow / unreachable verdict → false.
+ */
+export async function isReadAllowedFor(userKey: string, assetId: string, serviceId = "default"): Promise<boolean> {
+  if (!readAclEnabled()) return true;
+  if (!userKey) return false;
+  const { allowed } = await aclCheck(userKey, assetId, serviceId);
+  return allowed;
 }

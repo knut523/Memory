@@ -27,7 +27,10 @@ import {
   toWikiDetail,
   type BatchDeleteResult,
 } from "../api-helpers.js";
-import { enforceReadAcl } from "../read-acl.js";
+import { enforceReadAcl, isReadAllowed } from "../read-acl.js";
+import { coreMeta } from "../core-meta.js";
+import { pageAssetId } from "../store/wiki-service.js";
+import { idFromPath } from "../engines/wiki/manager.js";
 
 export interface WikiRouteDeps {
   wikiService: WikiService;
@@ -115,11 +118,20 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
         result.failed.push({ id, reason: "not found" });
         continue;
       }
+      // Capture per-page overrides BEFORE delete (it drops the row + its page_share map) — council #7.
+      const gcShares = wikiService.getPageShare(serviceId, id);
       const ok = wikiService.delete(serviceId, row.team_id, id);
       if (ok) {
         // wiki engine manager 注册清理仍由路由负责（wikiMgr 未注入 service）；
         // 连接/元数据/磁盘四类清理已在 service.cleanupResources 内完成。
         try { wikiMgr.remove(id); } catch (err) { console.warn(`[wiki] wikiMgr.remove(${id}) failed:`, err); }
+        // Per-page ACL lifecycle: delete this wiki's page-assets so none orphan in memory-core.
+        const gcKey = (c.req.header("x-tdai-user-key") || "").trim();
+        if (gcKey) {
+          for (const entry of Object.values(gcShares)) {
+            await coreMeta("asset/delete", { asset_ids: [pageAssetId(entry.uuid)] }, gcKey, serviceId);
+          }
+        }
         result.deleted_ids.push(id);
       } else {
         result.failed.push({ id, reason: "delete failed" });
@@ -164,6 +176,123 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
     const updated = wikiService.setFolderMeta(serviceId, wikiId, folderPath, description);
     if (!updated) return c.json(wrapError(404, "wiki not found"), 404);
     return c.json(wrapOk(toWikiDetail(updated)));
+  });
+
+  // Per-page sharing (Pillar-4): set one page's visibility (private|restricted|team) or clear it
+  // (visibility=null → the page inherits the wiki). ONLY the wiki owner may set page access. The page
+  // becomes its own memory-core asset (wpage_<uuid>) whose visibility is clamped to be no more
+  // permissive than the wiki's (fail-closed intersection). Clearing deletes the page-asset.
+  app.post("/page/share", async (c) => {
+    const body = await c.req.json<Record<string, unknown>>();
+    const serviceId = c.req.header("x-tdai-service-id");
+    if (!isValidIdSegment(serviceId)) return c.json(wrapError(400, "x-tdai-service-id header is required"), 400);
+    const callerKey = (c.req.header("x-tdai-user-key") || "").trim();
+    if (!callerKey) return c.json(wrapError(403, "permission denied: authentication required"), 403);
+    const wikiId = body.wiki_id;
+    if (!isValidIdSegment(wikiId)) return c.json(wrapError(400, "wiki_id is required"), 400);
+    const ref = typeof body.ref === "string" ? body.ref.trim() : "";
+    if (!ref) return c.json(wrapError(400, "ref (page relPath) is required"), 400);
+    const VIS = ["private", "restricted", "team"] as const;
+    const visRaw = body.visibility;
+    const visibility: string | null | undefined =
+      visRaw === null ? null : typeof visRaw === "string" && (VIS as readonly string[]).includes(visRaw) ? visRaw : undefined;
+    if (visibility === undefined) {
+      return c.json(wrapError(400, "visibility must be one of private|restricted|team, or null to clear"), 400);
+    }
+
+    const row = wikiService.getById(serviceId, wikiId);
+    if (!row) return c.json(wrapError(404, "wiki not found"), 404);
+    // AUTHORITATIVE owner + visibility live on the memory-core asset (the KS-local row.owner_user_id is
+    // null for older wikis, so we must NOT gate on it). Fetch both in one call.
+    const wikiAsset = await coreMeta<{ owner_user_id?: string; visibility?: string }>(
+      "asset/get",
+      { asset_id: wikiId },
+      callerKey,
+      serviceId,
+    );
+    const wikiOwner = wikiAsset.data?.owner_user_id;
+    if (!wikiAsset.ok || !wikiOwner) {
+      return c.json(wrapError(409, "cannot determine wiki owner; cannot set page access"), 409);
+    }
+
+    // Only the wiki owner may set page-level access (council #5): verify caller identity against core.
+    const who = await coreMeta<{ user?: { user_id?: string } }>("auth/verify", { user_key: callerKey }, callerKey, serviceId);
+    const callerId = who.data?.user?.user_id;
+    if (!who.ok || !callerId) return c.json(wrapError(403, "permission denied: could not verify caller"), 403);
+    if (callerId !== wikiOwner) {
+      return c.json(wrapError(403, "permission denied: only the wiki owner can set page access"), 403);
+    }
+
+    // Clamp: a page may not be MORE visible than its wiki (fail-closed intersection, council #4).
+    if (visibility !== null) {
+      if (typeof wikiAsset.data?.visibility !== "string") {
+        return c.json(wrapError(409, "cannot determine wiki visibility to clamp against; refusing to set page access"), 409);
+      }
+      const rank: Record<string, number> = { private: 0, restricted: 1, team: 2 };
+      const wikiVis = wikiAsset.data.visibility;
+      if ((rank[visibility] ?? 2) > (rank[wikiVis] ?? 2)) {
+        return c.json(wrapError(400, `page cannot be more visible than its wiki (wiki is '${wikiVis}')`), 400);
+      }
+    }
+
+    // Persist the hub-side mapping (mints/reuses the stable page uuid), keyed by the CANONICAL page
+    // id (idFromPath form) so it matches the search-engine id + page/read refs for enforcement.
+    const share = wikiService.setPageShare(serviceId, wikiId, idFromPath(ref), visibility);
+    if (!share) return c.json(wrapError(404, "wiki not found"), 404);
+
+    // Sync the page-asset into memory-core (as the owner).
+    if (visibility === null) {
+      if (share.uuid) await coreMeta("asset/delete", { asset_ids: [share.assetId] }, callerKey, serviceId);
+      return c.json(wrapOk({ ref, visibility: null }));
+    }
+    // Create-or-update: update first (cheap when it exists), create if missing.
+    const upd = await coreMeta("asset/update", { asset_id: share.assetId, visibility }, callerKey, serviceId);
+    if (!upd.ok) {
+      const crt = await coreMeta(
+        "asset/create",
+        {
+          asset_id: share.assetId,
+          team_id: row.team_id,
+          asset_type: "llm_wiki_page",
+          name: ref,
+          owner_user_id: wikiOwner,
+          visibility,
+          source_type: "extracted",
+        },
+        callerKey,
+        serviceId,
+      );
+      if (!crt.ok) {
+        // Roll back the hub override so we never leave a deny-all page: without its wpage asset in
+        // core, acl/check returns asset_not_available = deny for EVERYONE incl. the owner (council #5).
+        wikiService.setPageShare(serviceId, wikiId, idFromPath(ref), null);
+        return c.json(wrapError(502, `core sync failed: ${crt.message || upd.message || "unknown"}`), 502);
+      }
+    }
+    return c.json(wrapOk({ ref, visibility, asset_id: share.assetId }));
+  });
+
+  // Per-page sharing status for the UI: the current override map { "<pageId>": {uuid, visibility} }.
+  // Owner-only — the map reveals which pages are restricted (their existence + visibility).
+  app.post("/page/shares", async (c) => {
+    const body = await c.req.json<Record<string, unknown>>();
+    const serviceId = c.req.header("x-tdai-service-id");
+    if (!isValidIdSegment(serviceId)) return c.json(wrapError(400, "x-tdai-service-id header is required"), 400);
+    const wikiId = body.wiki_id;
+    if (!isValidIdSegment(wikiId)) return c.json(wrapError(400, "wiki_id is required"), 400);
+    const row = wikiService.getById(serviceId, wikiId);
+    if (!row) return c.json(wrapError(404, "wiki not found"), 404);
+    const callerKey = (c.req.header("x-tdai-user-key") || "").trim();
+    // Authoritative owner from the core asset (KS-local row.owner_user_id may be null).
+    const wikiAsset = await coreMeta<{ owner_user_id?: string }>("asset/get", { asset_id: wikiId }, callerKey, serviceId);
+    const who = callerKey
+      ? await coreMeta<{ user?: { user_id?: string } }>("auth/verify", { user_key: callerKey }, callerKey, serviceId)
+      : null;
+    const wikiOwner = wikiAsset.data?.owner_user_id;
+    if (!wikiOwner || who?.data?.user?.user_id !== wikiOwner) {
+      return c.json(wrapError(403, "permission denied: only the wiki owner can view page sharing"), 403);
+    }
+    return c.json(wrapOk({ shares: wikiService.getPageShare(serviceId, String(wikiId)) }));
   });
 
   // ── WITH-IdFields (service_id + team_id) ──
@@ -224,8 +353,26 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
     const wikiId = body.wiki_id;
     if (!isValidIdSegment(wikiId)) return c.json(wrapError(400, "wiki_id is required"), 400);
 
+    const rlDenied = await enforceReadAcl(c, String(wikiId));
+    if (rlDenied) return rlDenied;
+
     const row = wikiService.getById(serviceId, wikiId);
     if (!row) return c.json(wrapError(404, "wiki not found"), 404);
+
+    // Per-page ACL (Pillar-4): once any page override exists, raw source listing is owner-only —
+    // source filenames can reveal a restricted page's existence (council #3/#8), mirrors raw/read.
+    const rlShares = wikiService.getPageShare(serviceId, String(wikiId));
+    if (Object.keys(rlShares).length > 0) {
+      const callerKey = (c.req.header("x-tdai-user-key") || "").trim();
+      const wa = await coreMeta<{ owner_user_id?: string }>("asset/get", { asset_id: wikiId }, callerKey, serviceId);
+      const who = callerKey
+        ? await coreMeta<{ user?: { user_id?: string } }>("auth/verify", { user_key: callerKey }, callerKey, serviceId)
+        : null;
+      const wo = wa.data?.owner_user_id;
+      if (!wo || who?.data?.user?.user_id !== wo) {
+        return c.json(wrapError(403, "permission denied: this wiki has per-page restrictions; raw listing is owner-only"), 403);
+      }
+    }
 
     const items = wikiService.rawLs(serviceId, row.team_id, wikiId);
     if (items === null) return c.json(wrapError(404, "wiki not found"), 404);
@@ -252,6 +399,26 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
 
     const row = wikiService.getById(serviceId, wikiId);
     if (!row) return c.json(wrapError(404, "wiki not found"), 404);
+
+    // Per-page ACL (Pillar-4): raw source files can contain a restricted page's content. Until a
+    // source→page mapping exists, once ANY page in this wiki has an override, raw source access is
+    // owner-only (fail-closed, council #8). No override → unchanged behaviour.
+    const rawShares = wikiService.getPageShare(serviceId, String(wikiId));
+    if (Object.keys(rawShares).length > 0) {
+      const callerKey = (c.req.header("x-tdai-user-key") || "").trim();
+      const wa = await coreMeta<{ owner_user_id?: string }>("asset/get", { asset_id: wikiId }, callerKey, serviceId);
+      const who = callerKey
+        ? await coreMeta<{ user?: { user_id?: string } }>("auth/verify", { user_key: callerKey }, callerKey, serviceId)
+        : null;
+      const callerId = who?.data?.user?.user_id;
+      const wo = wa.data?.owner_user_id;
+      if (!wo || callerId !== wo) {
+        return c.json(
+          wrapError(403, "permission denied: this wiki has per-page restrictions; raw source access is owner-only"),
+          403,
+        );
+      }
+    }
 
     try {
       const result = wikiService.rawReadMany(serviceId, row.team_id, wikiId, filenames);
@@ -359,12 +526,23 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
     const wikiId = body.wiki_id;
     if (!isValidIdSegment(wikiId)) return c.json(wrapError(400, "wiki_id is required"), 400);
 
+    const lsDenied = await enforceReadAcl(c, String(wikiId));
+    if (lsDenied) return lsDenied;
+
     const row = wikiService.getById(serviceId, wikiId);
     if (!row) return c.json(wrapError(404, "wiki not found"), 404);
 
     const items = wikiService.pageLs(serviceId, row.team_id, wikiId);
     if (items === null) return c.json(wrapError(404, "wiki not found"), 404);
-    return c.json(wrapOk({ items }));
+    // Per-page ACL (Pillar-4): omit pages the caller can't read — page/ls would otherwise leak a
+    // hidden page's title/path/existence (council #3 fix). item.id is the idFromPath page-id.
+    const lsShares = wikiService.getPageShare(serviceId, String(wikiId));
+    const lsDeny = new Set<string>();
+    for (const [pageId, entry] of Object.entries(lsShares)) {
+      if (!(await isReadAllowed(c, pageAssetId(entry.uuid)))) lsDeny.add(pageId);
+    }
+    const lsItems = lsDeny.size > 0 ? items.filter((it) => !lsDeny.has(it.id)) : items;
+    return c.json(wrapOk({ items: lsItems }));
   });
 
   app.post("/page/read", async (c) => {
@@ -388,8 +566,18 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
     const row = wikiService.getById(serviceId, wikiId);
     if (!row) return c.json(wrapError(404, "wiki not found"), 404);
 
+    // Per-page ACL (Pillar-4): drop refs the caller can't read (overridden + denied). A hidden page
+    // is simply omitted from the response — indistinguishable from missing, i.e. fail-closed.
+    const shares = wikiService.getPageShare(serviceId, String(wikiId));
+    const allowedRefs: string[] = [];
+    for (const r of refs as string[]) {
+      const entry = shares[idFromPath(r)];
+      if (entry && !(await isReadAllowed(c, pageAssetId(entry.uuid)))) continue;
+      allowedRefs.push(r);
+    }
+
     try {
-      const result = wikiService.pageReadMany(serviceId, row.team_id, wikiId, refs);
+      const result = wikiService.pageReadMany(serviceId, row.team_id, wikiId, allowedRefs);
       const err = maybeWriteError(result);
       if (err) return err;
       return c.json(wrapOk({ items: result }));
@@ -460,6 +648,17 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
       const err = maybeWriteError(result);
       if (err) return err;
       try { wikiMgr.sync(wikiId); } catch (e) { console.warn(`[wiki] wikiMgr.sync(${wikiId}) failed after page/rm:`, e); }
+      // Per-page ACL lifecycle (council #7): a removed page must not orphan its page-asset. For each
+      // removed ref that HAD an override, clear the hub mapping + delete the wpage asset (best-effort).
+      const rmShares = wikiService.getPageShare(ids.service_id, String(wikiId));
+      const rmCallerKey = (c.req.header("x-tdai-user-key") || "").trim();
+      for (const r of refs as string[]) {
+        const pid = idFromPath(r);
+        const entry = rmShares[pid];
+        if (!entry) continue;
+        wikiService.setPageShare(ids.service_id, String(wikiId), pid, null);
+        if (rmCallerKey) await coreMeta("asset/delete", { asset_ids: [pageAssetId(entry.uuid)] }, rmCallerKey, ids.service_id);
+      }
       return c.json(wrapOk(result));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -476,6 +675,11 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
     const wikiId = body.wiki_id;
     if (!isValidIdSegment(wikiId)) return c.json(wrapError(400, "wiki_id is required"), 400);
 
+    // Wiki-level read gate (council #1 fix): the graph exposes every node title/path + edges, so it
+    // must be gated like page/read + search (it previously wasn't).
+    const gdenied = await enforceReadAcl(c, String(wikiId));
+    if (gdenied) return gdenied;
+
     const row = wikiService.getById(serviceId, wikiId);
     if (!row) return c.json(wrapError(404, "wiki not found"), 404);
 
@@ -483,6 +687,17 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
       return c.json(wrapOk({ nodes: [], edges: [], communities: [] }));
     }
     const graphData = wikiMgr.graph(wikiId);
+    // Per-page ACL (Pillar-4): scrub nodes + edges for pages the caller can't read (council #8) —
+    // node.id and edge.source/target are all page-ids (idFromPath form), so excludeIds matches directly.
+    const gExclude = new Set<string>();
+    const gShares = wikiService.getPageShare(serviceId, String(wikiId));
+    for (const [pageId, entry] of Object.entries(gShares)) {
+      if (!(await isReadAllowed(c, pageAssetId(entry.uuid)))) gExclude.add(pageId);
+    }
+    if (gExclude.size > 0) {
+      graphData.nodes = graphData.nodes.filter((n) => !gExclude.has(n.id));
+      graphData.edges = graphData.edges.filter((e) => !gExclude.has(e.source) && !gExclude.has(e.target));
+    }
     return c.json(wrapOk(graphData));
   });
 
@@ -533,7 +748,17 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
       minScore = body.minScore;
     }
 
-    const response = wikiMgr.search(wikiId, query, limit, { hop, decay, minScore });
+    // Per-page ACL (Pillar-4): hide pages the caller can't read. Only OVERRIDDEN pages need a check
+    // (all others are covered by the wiki-level gate above); the hub knows which from its local map,
+    // so this costs one acl/check per shared page, not per hit. The exclude-set is applied INSIDE the
+    // search engine so hidden pages never leak via related/links/count (council #3/#6).
+    const excludeIds = new Set<string>();
+    const shares = wikiService.getPageShare(serviceId, String(wikiId));
+    for (const [pageId, entry] of Object.entries(shares)) {
+      if (!(await isReadAllowed(c, pageAssetId(entry.uuid)))) excludeIds.add(pageId);
+    }
+
+    const response = wikiMgr.search(wikiId, query, limit, { hop, decay, minScore, excludeIds });
     return c.json(wrapOk(response));
   });
 

@@ -19,7 +19,10 @@ import type { WikiSourceManager } from "../engines/wiki/index.js";
 import { executeTool as executeCodeTool } from "../engines/code/index.js";
 import { wrapOk, wrapError, isValidIdSegment } from "../api-helpers.js";
 import { isWikiId, isCodeGraphId } from "../store/ids.js";
-import { enforceReadAcl } from "../read-acl.js";
+import { enforceReadAcl, isReadAllowedFor } from "../read-acl.js";
+import { pageAssetId } from "../store/wiki-service.js";
+import { idFromPath } from "../engines/wiki/manager.js";
+import { coreMeta } from "../core-meta.js";
 
 export interface ToolsRouteDeps {
   wikiService: WikiService;
@@ -278,7 +281,7 @@ export function createToolsRoutes(deps: ToolsRouteDeps): Hono {
       const row = wikiService.getById(serviceId, knowledgeId);
       if (!row) return c.json(wrapError(404, "wiki not found"), 404);
 
-      return executeWikiTool(serviceId, toolName, row, toolParams, wikiService, wikiMgr);
+      return executeWikiTool(serviceId, toolName, row, toolParams, wikiService, wikiMgr, (c.req.header("x-tdai-user-key") || "").trim());
     }
 
     if (isCodeGraphId(knowledgeId)) {
@@ -309,12 +312,33 @@ export function createToolsRoutes(deps: ToolsRouteDeps): Hono {
 async function executeWikiTool(
   serviceId: string,
   toolName: string,
-  row: { wiki_id: string; team_id: string; status: string; name: string },
+  row: { wiki_id: string; team_id: string; status: string; name: string; owner_user_id: string | null },
   params: Record<string, unknown>,
   wikiService: WikiService,
   wikiMgr: WikiSourceManager,
+  callerKey: string,
 ): Promise<Response> {
   const { wiki_id, team_id } = row;
+
+  // Per-page ACL (Pillar-4): raw source (filenames + content) can reveal a restricted page, so once
+  // ANY page override exists on this wiki, the MCP raw tools are owner-only — mirrors HTTP raw/ls +
+  // raw/read (council parity fix). Null = allowed.
+  const rawOwnerGate = async (): Promise<Response | null> => {
+    if (Object.keys(wikiService.getPageShare(serviceId, wiki_id)).length === 0) return null;
+    // Authoritative owner from the core asset (KS-local row.owner_user_id may be null).
+    const wa = await coreMeta<{ owner_user_id?: string }>("asset/get", { asset_id: wiki_id }, callerKey, serviceId);
+    const who = callerKey
+      ? await coreMeta<{ user?: { user_id?: string } }>("auth/verify", { user_key: callerKey }, callerKey, serviceId)
+      : null;
+    const wo = wa.data?.owner_user_id;
+    if (!wo || who?.data?.user?.user_id !== wo) {
+      return Response.json(
+        wrapError(403, "permission denied: this wiki has per-page restrictions; raw access is owner-only"),
+        { status: 403 },
+      );
+    }
+    return null;
+  };
 
   switch (toolName) {
     case "get_info": {
@@ -331,7 +355,12 @@ async function executeWikiTool(
         return Response.json(wrapOk({ results: [], links: [], count: 0 }));
       }
       const limit = typeof params.limit === "number" ? params.limit : 20;
-      const response = wikiMgr.search(wiki_id, query, limit);
+      // Per-page ACL (Pillar-4): hide pages the caller can't read (same as the HTTP /search route).
+      const sxExclude = new Set<string>();
+      for (const [pageId, entry] of Object.entries(wikiService.getPageShare(serviceId, wiki_id))) {
+        if (!(await isReadAllowedFor(callerKey, pageAssetId(entry.uuid), serviceId))) sxExclude.add(pageId);
+      }
+      const response = wikiMgr.search(wiki_id, query, limit, { excludeIds: sxExclude });
       return Response.json(wrapOk(response));
     }
     case "list_pages": {
@@ -340,7 +369,13 @@ async function executeWikiTool(
       }
       const items = wikiService.pageLs(serviceId, team_id, wiki_id);
       if (items === null) return Response.json(wrapError(404, "wiki not found"), { status: 404 });
-      return Response.json(wrapOk({ items }));
+      // Per-page ACL (Pillar-4): omit pages the caller can't read (don't leak title/path/existence).
+      const lpDeny = new Set<string>();
+      for (const [pageId, entry] of Object.entries(wikiService.getPageShare(serviceId, wiki_id))) {
+        if (!(await isReadAllowedFor(callerKey, pageAssetId(entry.uuid), serviceId))) lpDeny.add(pageId);
+      }
+      const lpItems = lpDeny.size > 0 ? items.filter((it) => !lpDeny.has(it.id)) : items;
+      return Response.json(wrapOk({ items: lpItems }));
     }
     case "read_page": {
       const refs = params.refs;
@@ -350,7 +385,15 @@ async function executeWikiTool(
       if (row.status !== "ready") {
         return Response.json(wrapOk({ items: [] }));
       }
-      const result = wikiService.pageReadMany(serviceId, team_id, wiki_id, refs as string[]);
+      // Per-page ACL (Pillar-4): drop refs the caller can't read (hidden = omitted, fail-closed).
+      const rpShares = wikiService.getPageShare(serviceId, wiki_id);
+      const rpAllowed: string[] = [];
+      for (const r of refs as string[]) {
+        const e = rpShares[idFromPath(r)];
+        if (e && !(await isReadAllowedFor(callerKey, pageAssetId(e.uuid), serviceId))) continue;
+        rpAllowed.push(r);
+      }
+      const result = wikiService.pageReadMany(serviceId, team_id, wiki_id, rpAllowed);
       return Response.json(wrapOk({ items: result }));
     }
     case "get_graph": {
@@ -358,14 +401,27 @@ async function executeWikiTool(
         return Response.json(wrapOk({ nodes: [], edges: [], communities: [] }));
       }
       const graphData = wikiMgr.graph(wiki_id);
+      // Per-page ACL (Pillar-4): scrub nodes/edges the caller can't read.
+      const ggEx = new Set<string>();
+      for (const [pageId, entry] of Object.entries(wikiService.getPageShare(serviceId, wiki_id))) {
+        if (!(await isReadAllowedFor(callerKey, pageAssetId(entry.uuid), serviceId))) ggEx.add(pageId);
+      }
+      if (ggEx.size > 0) {
+        graphData.nodes = graphData.nodes.filter((n) => !ggEx.has(n.id));
+        graphData.edges = graphData.edges.filter((e) => !ggEx.has(e.source) && !ggEx.has(e.target));
+      }
       return Response.json(wrapOk(graphData));
     }
     case "list_raw": {
+      const rg = await rawOwnerGate();
+      if (rg) return rg;
       const items = wikiService.rawLs(serviceId, team_id, wiki_id);
       if (items === null) return Response.json(wrapError(404, "wiki not found"), { status: 404 });
       return Response.json(wrapOk({ items }));
     }
     case "read_raw": {
+      const rg = await rawOwnerGate();
+      if (rg) return rg;
       const filenames = params.filenames;
       if (!Array.isArray(filenames) || filenames.length === 0) {
         return Response.json(wrapError(400, "filenames is required (non-empty array)"), { status: 400 });
