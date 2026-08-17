@@ -18,6 +18,8 @@ services:
       context: ./MemoryCore
       dockerfile: Dockerfile
     restart: unless-stopped
+    expose:
+      - "8420"
     environment:
       TDAI_GATEWAY_PORT: "8420"
       TDAI_GATEWAY_HOST: "0.0.0.0"
@@ -85,6 +87,9 @@ services:
       context: .
       dockerfile: deploy/coolify/memory-hub.Dockerfile
     restart: unless-stopped
+    expose:
+      - "8125"
+      - "8424"
     depends_on:
       memory-core:
         condition: service_healthy
@@ -124,6 +129,8 @@ services:
       context: ./MemoryProxy
       dockerfile: Dockerfile
     restart: unless-stopped
+    expose:
+      - "8096"
     depends_on:
       memory-core:
         condition: service_healthy
