@@ -1,0 +1,8 @@
+{
+  "name": "@context-proxy/cost-guard",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "description": "Placeholder for the proprietary cost-guard submodule, absent in this open-source checkout. Only loaded when storage backend is 'cos', which this deployment does not use."
+}
