@@ -15,7 +15,8 @@
 services:
   memory-core:
     build:
-      context: ./MemoryCore
+      # relative to THIS file's directory (deploy/coolify/), not repo root
+      context: ../../MemoryCore
       dockerfile: Dockerfile
     restart: unless-stopped
     expose:
@@ -47,9 +48,9 @@ services:
         data:
           baseDir: /data/tdai-memory
         llm:
-          baseUrl: "${MEMORY_LLM_BASE_URL}"
-          apiKey: "${MEMORY_LLM_API_KEY}"
-          model: "${MEMORY_LLM_MODEL}"
+          baseUrl: "$${MEMORY_LLM_BASE_URL}"
+          apiKey: "$${MEMORY_LLM_API_KEY}"
+          model: "$${MEMORY_LLM_MODEL}"
           maxTokens: 32000
           timeoutMs: 300000
         memory:
@@ -84,7 +85,8 @@ services:
 
   memory-hub:
     build:
-      context: .
+      # relative to THIS file's directory (deploy/coolify/) -> repo root
+      context: ../..
       dockerfile: deploy/coolify/memory-hub.Dockerfile
     restart: unless-stopped
     expose:
@@ -126,7 +128,8 @@ services:
 
   memory-proxy:
     build:
-      context: ./MemoryProxy
+      # relative to THIS file's directory (deploy/coolify/), not repo root
+      context: ../../MemoryProxy
       dockerfile: Dockerfile
     restart: unless-stopped
     expose:
@@ -154,8 +157,8 @@ services:
           port: 8096
           forwardTimeoutMs: 600000
         upstream:
-          url: "${PROXY_UPSTREAM_URL}"
-          apiKey: "${PROXY_UPSTREAM_API_KEY}"
+          url: "$${PROXY_UPSTREAM_URL}"
+          apiKey: "$${PROXY_UPSTREAM_API_KEY}"
         log:
           file: ""
           level: info
@@ -230,17 +233,17 @@ services:
           -X POST -H "Content-Type: application/json" \
           -H "x-tdai-service-id: default" \
           "http://memory-core:8420/v3/internal/meta/user/init-admin" \
-          -d "{\"username\":\"admin\",\"user_key\":\"$KEY\"}")
-        if [ "$CODE" = "200" ]; then
+          -d "{\"username\":\"admin\",\"user_key\":\"$$KEY\"}")
+        if [ "$$CODE" = "200" ]; then
           echo "admin user created."
           echo "username: admin"
-          echo "user_key: $KEY"
+          echo "user_key: $$KEY"
           echo "Save this now -- it will not be shown again by this container."
-        elif [ "$CODE" = "409" ]; then
+        elif [ "$$CODE" = "409" ]; then
           echo "admin user already exists (init-admin returned 409) -- nothing to do."
           echo "If you lost the original key, you'll need to reset the memory-core-data volume to re-init."
         else
-          echo "init-admin returned HTTP $CODE:"
+          echo "init-admin returned HTTP $$CODE:"
           cat /tmp/resp
           exit 1
         fi
