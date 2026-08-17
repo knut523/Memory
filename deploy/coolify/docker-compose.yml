@@ -105,7 +105,7 @@ services:
       REMOTE_INSTANCE_ID: default
       REMOTE_INSTANCE_NAME: default
       REMOTE_INSTANCE_URL: http://memory-core:8420
-      REMOTE_INSTANCE_KEY: ""
+      REMOTE_INSTANCE_KEY: "local"
       REMOTE_INSTANCE_PROXY_URL: ${MEMORY_PROXY_PUBLIC_URL:-}
       LLM_MODE: custom
       LLM_PROTOCOL: ${MEMORY_LLM_PROTOCOL:-openai}
