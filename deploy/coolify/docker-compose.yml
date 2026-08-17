@@ -1,0 +1,247 @@
+# Coolify Docker Compose deployment for knut523/Memory (this fork, not the
+# upstream Docker Hub images — see deploy/coolify/memory-hub.Dockerfile for
+# why memory-hub needs its own build recipe).
+#
+# Required env vars (set in the Coolify application, never committed here):
+#   MEMORY_LLM_BASE_URL / MEMORY_LLM_API_KEY / MEMORY_LLM_MODEL
+#     -> powers memory-core's + memory-hub's embed/summarize/persona/wiki-ingest LLM calls
+#   PROXY_UPSTREAM_URL / PROXY_UPSTREAM_API_KEY / PROXY_UPSTREAM_MODEL
+#     -> the upstream LLM the proxy forwards a coding agent's actual requests to
+#
+# Every service carries an explicit memory limit (mandatory on this box) and a
+# reduced Node heap cap (the upstream Dockerfiles default to 1.5GB heap each,
+# sized for a bigger dedicated box) — see deploy/coolify/README.md.
+
+services:
+  memory-core:
+    build:
+      context: ./MemoryCore
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      TDAI_GATEWAY_PORT: "8420"
+      TDAI_GATEWAY_HOST: "0.0.0.0"
+      # Must stay empty: the proxy's auth/verify call omits the Bearer header
+      # (upstream bug), so a non-empty core key breaks proxy full-stack mode.
+      TDAI_GATEWAY_API_KEY: ""
+      TDAI_DATA_DIR: /data/tdai-memory
+      NODE_OPTIONS: "--max-old-space-size=512"
+      MEMORY_LLM_BASE_URL: ${MEMORY_LLM_BASE_URL:?set MEMORY_LLM_BASE_URL in the Coolify app}
+      MEMORY_LLM_API_KEY: ${MEMORY_LLM_API_KEY:?set MEMORY_LLM_API_KEY in the Coolify app}
+      MEMORY_LLM_MODEL: ${MEMORY_LLM_MODEL:?set MEMORY_LLM_MODEL in the Coolify app}
+    volumes:
+      - memory-core-data:/data/tdai-memory
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mkdir -p /data/config
+        cat > /data/config/tdai-gateway.yaml <<YAML
+        deployMode: standalone
+        stateBackend: local
+        server:
+          port: 8420
+          host: 0.0.0.0
+        data:
+          baseDir: /data/tdai-memory
+        llm:
+          baseUrl: "${MEMORY_LLM_BASE_URL}"
+          apiKey: "${MEMORY_LLM_API_KEY}"
+          model: "${MEMORY_LLM_MODEL}"
+          maxTokens: 32000
+          timeoutMs: 300000
+        memory:
+          promptMode: chat
+          capture: { enabled: true }
+          extraction: { enabled: true, enableDedup: true, maxMemoriesPerSession: 20 }
+          persona: { triggerEveryN: 50, maxScenes: 15 }
+          pipeline: { everyNConversations: 5, enableWarmup: true, l1IdleTimeoutSeconds: 600, l2DelayAfterL1Seconds: 90, l2MinIntervalSeconds: 900, l2MaxIntervalSeconds: 3600 }
+          recall: { enabled: true, maxResults: 5, scoreThreshold: 0.3, strategy: hybrid, timeoutMs: 5000 }
+          storeBackend: sqlite
+          embedding: { provider: none }
+        skill:
+          enabled: true
+          routing: { mode: bm25, searchTopK: 20 }
+          extraction:
+            enabled: true
+            maxIterations: 16
+            queue: { backend: local, keyPrefix: tdai, resultTtlSeconds: 86400, lockTtlMs: 600000, maxRetries: 2, retryBackoffsMs: [5000, 15000] }
+          resources: { maxResourceSizeBytes: 5000000 }
+        YAML
+        exec /usr/bin/tini -- node --import tsx src/gateway/server.ts
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8420/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 45s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+  memory-hub:
+    build:
+      context: .
+      dockerfile: deploy/coolify/memory-hub.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      memory-core:
+        condition: service_healthy
+    environment:
+      PANEL_PORT: "8125"
+      KNOWLEDGE_PORT: "8424"
+      NODE_OPTIONS: "--max-old-space-size=448"
+      # KNOWLEDGE_PUBLIC_BASE_URL must be externally reachable and include /v3
+      # -- set this to the memory-knowledge domain once it's assigned in Coolify.
+      KNOWLEDGE_PUBLIC_BASE_URL: ${KNOWLEDGE_PUBLIC_BASE_URL:?set to https://<memory-knowledge domain>/v3 in the Coolify app}
+      REMOTE_INSTANCE_ID: default
+      REMOTE_INSTANCE_NAME: default
+      REMOTE_INSTANCE_URL: http://memory-core:8420
+      REMOTE_INSTANCE_KEY: ""
+      REMOTE_INSTANCE_PROXY_URL: ${MEMORY_PROXY_PUBLIC_URL:-}
+      LLM_MODE: custom
+      LLM_PROTOCOL: ${MEMORY_LLM_PROTOCOL:-openai}
+      LLM_API_KEY: ${MEMORY_LLM_API_KEY}
+      LLM_BASE_URL: ${MEMORY_LLM_BASE_URL}
+      LLM_MODEL: ${MEMORY_LLM_MODEL}
+      KNOWLEDGE_LLM_BINDING_SYNC: "0"
+    volumes:
+      - memory-hub-data:/data/knowledge
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -fsS http://127.0.0.1:8125/health && curl -fsS http://127.0.0.1:8424/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 45s
+    deploy:
+      resources:
+        limits:
+          memory: 1280M
+
+  memory-proxy:
+    build:
+      context: ./MemoryProxy
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      memory-core:
+        condition: service_healthy
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=384"
+      PROXY_UPSTREAM_URL: ${PROXY_UPSTREAM_URL:?set PROXY_UPSTREAM_URL in the Coolify app}
+      PROXY_UPSTREAM_API_KEY: ${PROXY_UPSTREAM_API_KEY:?set PROXY_UPSTREAM_API_KEY in the Coolify app}
+      # Full-stack mode: auth + sessionInit + tdai-memory injection all on.
+      # sessionInit needs auth, so both are forced on together.
+      PROXY_ENABLE_AUTH: "1"
+      PROXY_ENABLE_SESSION_INIT: "1"
+      PROXY_ENABLE_TDAI: "1"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mkdir -p /data
+        cat > /data/config.yaml <<YAML
+        server:
+          host: 0.0.0.0
+          port: 8096
+          forwardTimeoutMs: 600000
+        upstream:
+          url: "${PROXY_UPSTREAM_URL}"
+          apiKey: "${PROXY_UPSTREAM_API_KEY}"
+        log:
+          file: ""
+          level: info
+          backend: console
+        tdai:
+          enabled: true
+          endpoint: "http://memory-core:8420"
+          apiKey: ""
+          serviceId: default
+          memory:
+            enabled: true
+            inject: true
+            writeL0: true
+            recallL1: true
+            injectL2L3: true
+        skill:
+          endpoint: "http://memory-core:8420"
+          serviceToken: ""
+        auth:
+          enabled: true
+          url: "http://memory-core:8420"
+          timeoutMs: 5000
+        sessionInit:
+          enabled: true
+          maxRetries: 3
+          injectAgentContext: true
+          injectTaskContext: true
+          headerAutoSelect:
+            enabled: true
+            teamHeader: "x-team-id"
+            agentHeader: "x-agent-id"
+            taskHeader: "x-task-id"
+            onMismatch: "form"
+        costGuard:
+          enabled: false
+        injection:
+          enabled: true
+          injectors:
+            - skill
+            - knowledge
+            - tdai-memory
+        redis:
+          enabled: false
+        YAML
+        exec /usr/bin/tini -- node --import tsx/esm src/index.ts --config /data/config.yaml
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8096/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 45s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # One-shot admin bootstrap: creates the system_admin user memory-core needs
+  # for Panel login, then exits. Retrieve the generated key from this
+  # service's logs in the Coolify dashboard after the first deploy.
+  memory-init:
+    image: curlimages/curl:8.11.1
+    restart: "no"
+    depends_on:
+      memory-core:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        KEY="sk-mem-$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)"
+        CODE=$(curl -sS -o /tmp/resp -w "%{http_code}" \
+          -X POST -H "Content-Type: application/json" \
+          -H "x-tdai-service-id: default" \
+          "http://memory-core:8420/v3/internal/meta/user/init-admin" \
+          -d "{\"username\":\"admin\",\"user_key\":\"$KEY\"}")
+        if [ "$CODE" = "200" ]; then
+          echo "admin user created."
+          echo "username: admin"
+          echo "user_key: $KEY"
+          echo "Save this now -- it will not be shown again by this container."
+        elif [ "$CODE" = "409" ]; then
+          echo "admin user already exists (init-admin returned 409) -- nothing to do."
+          echo "If you lost the original key, you'll need to reset the memory-core-data volume to re-init."
+        else
+          echo "init-admin returned HTTP $CODE:"
+          cat /tmp/resp
+          exit 1
+        fi
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+volumes:
+  memory-core-data:
+  memory-hub-data:
