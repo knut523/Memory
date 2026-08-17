@@ -1,0 +1,13 @@
+# Minimal diagnostic compose file -- isolates whether Coolify's dockercompose
+# build_pack works at all against this repo, before adding back custom
+# entrypoint/command, healthcheck, depends_on conditions, and deploy.resources.
+services:
+  memory-core:
+    build:
+      context: ../../MemoryCore
+      dockerfile: Dockerfile
+    expose:
+      - "8420"
+    environment:
+      TDAI_GATEWAY_PORT: "8420"
+      TDAI_GATEWAY_HOST: "0.0.0.0"
